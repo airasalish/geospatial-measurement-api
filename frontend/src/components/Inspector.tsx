@@ -171,7 +171,7 @@ function Method({ crs }: { crs: Record<string, string> }) {
           </p>
         );
       })}
-      <p style={{ color: "var(--ink-3)", fontSize: 12 }}>
+      <p style={{ color: "var(--text-3)", fontSize: 12 }}>
         Long edges are densified along WGS84 geodesics first. Reproduce with the PROJ string:
       </p>
       <code>{entries[0]?.[1]}</code>

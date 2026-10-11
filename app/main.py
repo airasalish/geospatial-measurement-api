@@ -61,7 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.engine.dispose()
 
     app = FastAPI(
-        title="Geospatial File Measurement API",
+        title="Traverse · Geospatial File Measurement API",
         version="1.0.0",
         description=(
             "Upload a Shapefile (.zip), KML or KMZ. Features are extracted and measured "

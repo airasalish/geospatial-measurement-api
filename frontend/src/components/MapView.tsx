@@ -7,7 +7,7 @@ import { area, fmt, length, type UnitSystem } from "../units";
 
 // Free, keyless basemaps: OpenFreeMap vector tiles, and Esri World Imagery for the
 // satellite view (drone surveys are easier to judge against imagery).
-const STYLE_URL = "https://tiles.openfreemap.org/styles/positron";
+const STYLE_URL = "https://tiles.openfreemap.org/styles/dark";
 const SATELLITE_TILES = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
 const SOURCE = "features";
@@ -19,9 +19,9 @@ const POINT: ExpressionSpecification = ["match", ["geometry-type"], ["Point", "M
 
 const statusColor = (measured: string): ExpressionSpecification => [
   "match", ["get", "status"],
-  "FAILED", "#b4382a",
-  "UNSUPPORTED", "#b98318",
-  "NOT_APPLICABLE", "#1c1f1d",
+  "FAILED", "#ff5d5d",
+  "UNSUPPORTED", "#f2b33d",
+  "NOT_APPLICABLE", "#a8b2bf",
   measured,
 ];
 const isOn = (key: "hover" | "selected"): ExpressionSpecification => ["boolean", ["feature-state", key], false];
@@ -110,8 +110,8 @@ export function MapView(props: Props) {
         source: SOURCE,
         filter: POLYGON,
         paint: {
-          "fill-color": statusColor("#e4532a"),
-          "fill-opacity": ["case", isOn("selected"), 0.42, isOn("hover"), 0.32, 0.18],
+          "fill-color": statusColor("#c6f432"),
+          "fill-opacity": ["case", isOn("selected"), 0.38, isOn("hover"), 0.26, 0.13],
         },
       });
       map.addLayer({
@@ -120,7 +120,7 @@ export function MapView(props: Props) {
         source: SOURCE,
         filter: POLYGON,
         paint: {
-          "line-color": ["case", isOn("selected"), "#1c1f1d", statusColor("#c4441f")],
+          "line-color": ["case", isOn("selected"), "#ffffff", statusColor("#c6f432")],
           "line-width": ["case", isOn("selected"), 2.6, isOn("hover"), 2.2, 1.4],
         },
       });
@@ -130,7 +130,7 @@ export function MapView(props: Props) {
         source: SOURCE,
         filter: LINE,
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#faf7f0", "line-width": ["case", isOn("selected"), 7, 5], "line-opacity": 0.9 },
+        paint: { "line-color": "#0c0f13", "line-width": ["case", isOn("selected"), 7, 5], "line-opacity": 0.85 },
       });
       map.addLayer({
         id: "line",
@@ -139,7 +139,7 @@ export function MapView(props: Props) {
         filter: LINE,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
-          "line-color": ["case", isOn("selected"), "#1c1f1d", statusColor("#2b6d8e")],
+          "line-color": ["case", isOn("selected"), "#ffffff", statusColor("#3cc4ee")],
           "line-width": ["case", isOn("selected"), 4, isOn("hover"), 3.6, 2.6],
         },
       });
@@ -150,14 +150,14 @@ export function MapView(props: Props) {
         filter: POINT,
         paint: {
           "circle-radius": ["case", isOn("selected"), 7.5, isOn("hover"), 6.5, 5],
-          "circle-color": ["case", isOn("selected"), "#e4532a", statusColor("#1c1f1d")],
-          "circle-stroke-color": "#faf7f0",
+          "circle-color": ["case", isOn("selected"), "#c6f432", statusColor("#e9edf2")],
+          "circle-stroke-color": "#0c0f13",
           "circle-stroke-width": 2,
         },
       });
       const labelPaint = {
-        "text-color": "#1c1f1d",
-        "text-halo-color": "rgba(250,247,240,0.95)",
+        "text-color": "#e9edf2",
+        "text-halo-color": "rgba(12,15,19,0.92)",
         "text-halo-width": 1.6,
       };
       map.addLayer({

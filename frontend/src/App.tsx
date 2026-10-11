@@ -192,9 +192,9 @@ export default function App() {
           <Logo />
           <div>
             <h1>
-              Field <em>Ledger</em>
+              traverse<span>.</span>
             </h1>
-            <p>Geospatial measurement · WGS84</p>
+            <p>Survey-grade measurement</p>
           </div>
         </div>
         <div className="section">

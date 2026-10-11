@@ -172,7 +172,7 @@ export function Ledger({ collection, units, selected, onPick, open, onToggle, he
                 onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onPick(p.index))}
               >
                 <span className="num">{p.index}</span>
-                <span title={p.name ?? undefined}>{p.name ?? <i style={{ color: "var(--ink-3)" }}>unnamed</i>}</span>
+                <span title={p.name ?? undefined}>{p.name ?? <i style={{ color: "var(--text-3)" }}>unnamed</i>}</span>
                 <span title={p.layer ?? undefined}>{p.layer ?? "—"}</span>
                 <span>{p.geometry_type ?? "—"}</span>
                 <span>

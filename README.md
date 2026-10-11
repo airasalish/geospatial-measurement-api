@@ -1,4 +1,7 @@
-# Geospatial File Measurement API · Field Ledger
+<p align="center"><img src="frontend/public/favicon.svg" width="72" alt="Traverse logo: a closed survey traverse of five stations"></p>
+
+<h1 align="center">traverse.</h1>
+<p align="center"><b>Survey-grade measurement for geospatial files.</b><br>Geospatial File Measurement API: FastAPI service plus web UI</p>
 
 [![CI](https://github.com/airasalish/geospatial-measurement-api/actions/workflows/ci.yml/badge.svg)](https://github.com/airasalish/geospatial-measurement-api/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
@@ -14,11 +17,11 @@ feature (ID, geometry type, geometry, CRS, attributes), and returns **areas,
 perimeters and lengths in metres**. Measurements agree with ellipsoidal (geodesic)
 ground truth to about **1 part in 10⁹** anywhere on Earth, poles included.
 
-It ships with **Field Ledger**, a map-first web UI (React + TypeScript + MapLibre)
+It ships with **Traverse**, a map-first web UI (React + TypeScript + MapLibre)
 served by the same process: drop a file, see every feature on a map or satellite
 imagery with its measurement, and inspect exactly how each number was computed.
 
-![Field Ledger: a farm parcel selected on satellite imagery, with the inspector showing area, perimeter and the projection used](docs/screenshots/inspector-satellite.jpg)
+![Traverse: a farm parcel selected on satellite imagery, with the inspector showing area, perimeter and the projection used](docs/screenshots/inspector-satellite.jpg)
 
 ```text
 POST /api/files/                     upload + process  -> 201, file info
@@ -134,9 +137,12 @@ in a `.env` file (see [`.env.example`](.env.example)).
 
 ## Web UI
 
-**Field Ledger** uses the visual language of a survey plan: paper and ink tones, a
-survey-flag accent, serif readouts and monospaced figures that line up like a field
-book. Everything on screen comes from the public API; the UI has no private endpoints.
+**Traverse** is named after the surveyor's traverse: walk a chain of stations,
+measure every leg, close the loop. The mark is exactly that, a closed five-station
+traverse. The interface is built like a field instrument: graphite surfaces that sit
+well over satellite imagery, a high-visibility survey-lime accent, Space Grotesk
+headings and JetBrains Mono figures so measurements line up in columns. Everything on
+screen comes from the public API; the UI has no private endpoints.
 
 ![Farm-plot bundle: 442 parcels, tracks and borewells with area labels, plus the sortable ledger](docs/screenshots/farm-plots.jpg)
 

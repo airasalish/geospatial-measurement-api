@@ -4,10 +4,10 @@ import { label } from "./MapView";
 
 const STATUS_ORDER: MeasurementStatus[] = ["MEASURED", "NOT_APPLICABLE", "UNSUPPORTED", "FAILED"];
 const STATUS_COLOR: Record<MeasurementStatus, string> = {
-  MEASURED: "var(--grass)",
-  NOT_APPLICABLE: "var(--ink-3)",
-  UNSUPPORTED: "var(--ochre)",
-  FAILED: "var(--brick)",
+  MEASURED: "var(--ok)",
+  NOT_APPLICABLE: "var(--text-3)",
+  UNSUPPORTED: "var(--warn)",
+  FAILED: "var(--err)",
 };
 
 function Value({ q }: { q: { value: string; unit: string } | null }) {
@@ -178,19 +178,19 @@ export function MapControls({ basemap, onBasemap, showLabels, onLabels }: Contro
       </label>
       <div className="legend" aria-label="Legend">
         <span>
-          <i style={{ background: "rgba(228,83,42,.35)", border: "1.5px solid #c4441f" }} />
+          <i style={{ background: "rgba(198,244,50,.2)", border: "1.5px solid #c6f432" }} />
           Area
         </span>
         <span>
-          <i style={{ height: 3, background: "#2b6d8e" }} />
+          <i style={{ height: 3, background: "#3cc4ee" }} />
           Length
         </span>
         <span>
-          <i style={{ width: 9, height: 9, borderRadius: "50%", background: "#1c1f1d" }} />
+          <i style={{ width: 9, height: 9, borderRadius: "50%", background: "#e9edf2" }} />
           Point
         </span>
         <span>
-          <i style={{ background: "#b4382a" }} />
+          <i style={{ background: "#ff5d5d" }} />
           Failed
         </span>
       </div>
