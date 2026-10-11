@@ -47,3 +47,30 @@ export function sketchKml(coords: [number, number][], kind: "polygon" | "line", 
     `<Placemark><name>${safe}</name>${geometry}</Placemark></Document></kml>\n`
   );
 }
+
+/** Stockpile report as CSV: one row per polygon, totals last. Volumes in m³. */
+export function stockpileCsv(
+  report: import("./api").BatchVolumes,
+  meta: { dem: string; file: string; base: string },
+): string {
+  const head = [
+    "index", "name", "status", "cut_m3", "fill_m3", "net_m3", "area_2d_m2", "surface_area_3d_m2",
+    "max_height_m", "max_slope_deg", "base_method", "coverage_pct", "message",
+  ];
+  const lines = [
+    `# Traverse stockpile report; DEM: ${meta.dem}; outlines: ${meta.file}; base: ${meta.base}`,
+    head.join(","),
+  ];
+  for (const it of report.items) {
+    const r = it.result;
+    lines.push(
+      [
+        it.index, it.name, it.status, r?.cut_m3, r?.fill_m3, r?.net_m3, r?.area_2d_m2, r?.surface_area_3d_m2,
+        r?.max_height_above_base_m, r?.slope.max_deg, r?.base_method, r?.coverage_pct, it.message,
+      ].map(csvCell).join(","),
+    );
+  }
+  const t = report.totals;
+  lines.push(["", "TOTAL", "", t.cut_m3, t.fill_m3, t.net_m3, t.area_2d_m2, t.surface_area_3d_m2].map(csvCell).join(","));
+  return lines.join("\r\n") + "\r\n";
+}

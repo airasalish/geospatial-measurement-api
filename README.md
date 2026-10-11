@@ -1,7 +1,7 @@
 <p align="center"><img src="frontend/public/favicon.svg" width="72" alt="Traverse logo: a closed survey traverse of five stations"></p>
 
 <h1 align="center">traverse.</h1>
-<p align="center"><b>Survey-grade measurement for geospatial files.</b><br>Geospatial File Measurement API: FastAPI service plus web UI</p>
+<p align="center"><b>Survey-grade measurement for geospatial files and drone elevation models.</b><br>Vector measurement and DEM volumetrics: FastAPI service plus web UI</p>
 
 [![CI](https://github.com/airasalish/geospatial-measurement-api/actions/workflows/ci.yml/badge.svg)](https://github.com/airasalish/geospatial-measurement-api/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
@@ -17,6 +17,11 @@ feature (ID, geometry type, geometry, CRS, attributes), and returns **areas,
 perimeters and lengths in metres**. Measurements agree with ellipsoidal (geodesic)
 ground truth to about **1 part in 10⁹** anywhere on Earth, poles included.
 
+It also measures **drone elevation models (DEM/DSM GeoTIFFs)**: stockpile, dump and
+pit **cut/fill volumes** with five base-surface methods, **survey-to-survey change**,
+3D surface area, slope-risk statistics and **haul-road profiles**, served as map
+tiles from Cloud-Optimised GeoTIFFs. See [Terrain and volumetrics](#terrain-and-volumetrics).
+
 It ships with **Traverse**, a map-first web UI (React + TypeScript + MapLibre)
 served by the same process: drop a file, see every feature on a map or satellite
 imagery with its measurement, and inspect exactly how each number was computed.
@@ -29,6 +34,13 @@ GET  /api/files/{id}/                file info (status, CRS, feature count, bbox
 GET  /api/files/{id}/measurements/   per-feature area / perimeter / length + totals
 GET  /api/files/{id}/features/       per-feature geometry (GeoJSON), CRS, properties
 GET  /api/files/{id}/geojson/        whole file as a WGS84 FeatureCollection, for maps
+
+POST /api/rasters/                   upload a DEM/DSM GeoTIFF -> Cloud-Optimised GeoTIFF
+POST /api/rasters/{id}/volume/       cut / fill / net, 3D area, slope inside a polygon
+POST /api/rasters/{id}/volumes/      the same for every polygon of a file (stockpile report)
+POST /api/rasters/{id}/profile/      elevation profile and grades along a line
+GET  /api/rasters/{id}/altitude/     elevation at a point
+GET  /api/rasters/{id}/tiles/{z}/{x}/{y}.png   elevation | hillshade | slope map tiles
 ```
 
 **Highlights**
@@ -50,7 +62,10 @@ GET  /api/files/{id}/geojson/        whole file as a WGS84 FeatureCollection, fo
   virtualised feature ledger (sort, filter, search across 100k rows), a feature
   inspector showing the exact projection, metric/imperial units, CSV/GeoJSON export,
   and shareable deep links (`?file=…&feature=…`). See [Web UI](#web-ui).
-- **Quality gates:** 104 backend tests at ~95% branch coverage, 11 frontend unit tests,
+- **DEM volumetrics.** Cut/fill against TIN, plane, flat or design bases, or against an
+  earlier survey. True ground cell sizes in any CRS. Validated against analytic cone,
+  frustum and pit volumes. See [Terrain and volumetrics](#terrain-and-volumetrics).
+- **Quality gates:** 147 backend tests at ~94% branch coverage, 16 frontend unit tests,
   `mypy --strict`, strict TypeScript, `ruff`, and CI that builds the Docker image and
   smoke-tests it end to end.
 
@@ -60,6 +75,7 @@ GET  /api/files/{id}/geojson/        whole file as a WGS84 FeatureCollection, fo
 
 - [Setup](#setup)
 - [Web UI](#web-ui)
+- [Terrain and volumetrics](#terrain-and-volumetrics)
 - [API](#api)
 - [Architecture](#architecture)
 - [CRS handling and measurement](#crs-handling-and-measurement)
@@ -180,6 +196,86 @@ endpoints.
 Basemaps are keyless: [OpenFreeMap](https://openfreemap.org) vector tiles and Esri
 World Imagery. Fonts are bundled (Latin subsets only), and MapLibre is split into its
 own long-cached chunk.
+
+---
+
+## Terrain and volumetrics
+
+Drone surveys produce elevation models (DSM/DTM). Traverse turns them into the numbers
+a mine or construction site runs on: how much material is in each stockpile, how much
+was moved since the last survey, how steep the walls are, and the grade of a haul road.
+
+![Stockpile report: every outline measured on the latest survey, with cut, fill, net, 2D and 3D area, max height and max slope](docs/screenshots/terrain-report.jpg)
+
+**Try it:** open the live demo and click **Try: quarry volumes (DEM)**. It loads two
+0.5 m surveys of a quarry yard (January and March) plus the stockpile outlines. Then
+**Stockpile report**, click any row, switch the base surface, or pick **Survey** to see
+what changed between the two dates.
+
+### What it computes
+
+| Output | How |
+|---|---|
+| **Cut / fill / net** | Σ (DEM − base) × true cell area over cells whose centre is inside the polygon. Cut is material above the base (stockpile), fill is void below it (pit), the same convention as Pix4D and DroneDeploy |
+| **3D surface area** | Σ cell area × √(1 + (∂z/∂x)² + (∂z/∂y)²), from central differences in metres |
+| **Slope** | arctan of the gradient magnitude: mean, max, % of area steeper than a threshold (default 30°) |
+| **Profile** | Geodesically densified line, bilinear DEM samples, cumulative geodesic distance, climb and descent, mean grade, and the **max sustained grade** over ~5 cells (single-cell grades are noise) |
+| **Map tiles** | rio-tiler reads only the COG blocks or overviews needed. Hillshade (Horn, sun 315°/45°) uses each tile's true ground pixel size; cubic resampling *and* cubic reprojection (the nearest-neighbour default stair-steps slope) |
+
+### Base surfaces
+
+| Method | Base under the material | Use when |
+|---|---|---|
+| `triangulated` (default) | TIN through DEM samples along the boundary | Irregular ground |
+| `plane` | Least-squares plane through the boundary | Sloped, even ground |
+| `lowest` / `highest` / `mean` | Flat at that boundary elevation | Flat pads only; warns when boundary relief exceeds 1 m |
+| `custom` | Flat at a given elevation | Design or floor levels |
+| `surface` | **Another DEM**, resampled onto this grid (bilinear) | Survey-to-survey change, plan against actual |
+
+### Cell size in metres, in any CRS
+
+Volume errors start with cell area. A 0.5 m UTM cell 277 km from the central meridian
+is **0.4997 m** on the ground: UTM scale factor k = 1.00055, which makes areas 0.11%
+too big if ignored. Traverse divides projected cell sizes by the local scale factors
+from `pyproj.Proj.get_factors`, and for lon/lat DEMs computes geodesic cell width and
+height per row. The test suite checks that the same cone stored in UTM and in degrees
+gives the same volume.
+
+### Accuracy (checked with the sample surveys)
+
+The sample DEMs are synthetic so every volume has an exact answer: a cone, a frustum, an
+elliptic cone and an inverted frustum on undulating, sloped ground with 2 cm survey noise.
+
+| Feature | True volume | TIN base | Plane base | Lowest-point base | **Survey compare** |
+|---|---:|---:|---:|---:|---:|
+| Coal stockpile (cone) | 9,021 m³ | +1.8% | +0.9% | +22% | change: **5,484 m³** (true 5,477) |
+| Iron-ore fines (frustum) | 14,611 m³ | −4.7% | −2.0% | +28% | **14,619 m³ (+0.05%)** |
+| Overburden dump (elliptic cone) | 10,042 m³ | +0.5% | −3.7% | +71% | unchanged |
+| Sand pile (cone) | 753 m³ | −1.2% | −2.1% | +55% | unchanged |
+| Excavation (pit) | 14,462 m³ | +0.3% | +1.3% | −25% | deepened: **6,208 m³** (true 6,198) |
+
+What the table shows:
+- **Arithmetic isn't the limit; knowing the ground under the pile is.** With one survey,
+  any base surface is an estimate. Here the ground undulates by ±1.3 m, so TIN and plane
+  land within 0.3–4.7%.
+- **Comparing two surveys removes that uncertainty** (+0.05%). This is why mines fly the
+  same site repeatedly.
+- **A flat lowest-point base on sloped ground overestimates by 22–71%.** DroneDeploy's
+  docs warn about the same trap, and Traverse flags it in the response.
+
+![Survey compare: Iron-ore fines added since January, with the slope-risk layer](docs/screenshots/terrain-survey-compare.jpg)
+
+![Haul-road profile: elevation along the road, climb, descent and max sustained grade](docs/screenshots/terrain-profile.jpg)
+
+### Ingestion
+
+Uploads must be single-band, north-up GeoTIFFs with a CRS. Imagery (3+ byte bands) and
+rotated rasters are rejected with a clear message. Each upload is converted to a
+**Cloud-Optimised GeoTIFF** (512 px tiles, DEFLATE with the floating-point predictor,
+averaged overviews). Analyses then read only the blocks under a polygon, and low-zoom
+tiles read overviews. Elevation statistics come from overviews, so a 250-million-cell
+DEM never loads fully into memory. Blobs live behind a small storage interface (`put`,
+`gdal_path`, `delete`) so they can move to S3.
 
 ---
 

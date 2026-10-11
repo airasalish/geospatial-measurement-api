@@ -1,7 +1,7 @@
 import maplibregl, { type ExpressionSpecification, type GeoJSONSource, type MapGeoJSONFeature } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MapCollection, MapFeatureProps } from "../api";
+import { type MapCollection, type MapFeatureProps, terrain } from "../api";
 import { type BBox, geometryBounds, isLineal, isPolygonal } from "../geo";
 import { area, fmt, length, type UnitSystem } from "../units";
 
@@ -34,10 +34,29 @@ export interface FocusRequest {
   nonce: number;
 }
 
+export interface FitRequest {
+  bbox: BBox;
+  nonce: number;
+}
+
+export interface DemLayer {
+  id: string;
+  style: "elevation" | "hillshade" | "slope";
+  opacity: number;
+  bounds: BBox | null;
+}
+
 interface Props {
   collection: MapCollection | null;
-  bbox: BBox | null;
-  fileKey: string | null;
+  /** Fit the view to these bounds whenever the nonce changes. */
+  fit: FitRequest | null;
+  /** Elevation model rendered under the vector data. */
+  dem: DemLayer | null;
+  /** Geometry currently being analysed on the DEM (volume polygon / profile line). */
+  overlay: GeoJSON.Geometry | null;
+  /** A highlighted position, e.g. the hovered point of a profile chart. */
+  marker: LngLat | null;
+  onCursor?: (lngLat: LngLat | null) => void;
   selected: number | null;
   focus: FocusRequest | null;
   onSelect: (index: number | null) => void;
@@ -82,7 +101,7 @@ interface Hover {
 }
 
 export function MapView(props: Props) {
-  const { collection, bbox, fileKey, selected, focus, onSelect, basemap, showLabels, units, padding, hovered, draw } =
+  const { collection, fit, dem, overlay, marker, selected, focus, onSelect, basemap, showLabels, units, padding, hovered, draw } =
     props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -252,6 +271,30 @@ export function MapView(props: Props) {
         paint: labelPaint,
       });
 
+      // Analysis overlay (polygon/line being measured on the DEM) and a marker point.
+      map.addSource("overlay", { type: "geojson", data: EMPTY });
+      map.addLayer({
+        id: "overlay-fill",
+        type: "fill",
+        source: "overlay",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: { "fill-color": "#2b6d8e", "fill-opacity": 0.12 },
+      });
+      map.addLayer({
+        id: "overlay-line",
+        type: "line",
+        source: "overlay",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#2b6d8e", "line-width": 3, "line-dasharray": [2, 1] },
+      });
+      map.addSource("marker", { type: "geojson", data: EMPTY });
+      map.addLayer({
+        id: "marker",
+        type: "circle",
+        source: "marker",
+        paint: { "circle-radius": 7, "circle-color": "#e4532a", "circle-stroke-color": "#faf7f0", "circle-stroke-width": 2.5 },
+      });
+
       // Sketch layers sit on top of everything.
       map.addSource(DRAW, { type: "geojson", data: EMPTY });
       map.addLayer({
@@ -283,6 +326,7 @@ export function MapView(props: Props) {
       });
 
       map.on("mousemove", (e) => {
+        cb.current.onCursor?.([e.lngLat.lng, e.lngLat.lat]);
         if (sketch.current.kind) {
           sketch.current.cursor = [e.lngLat.lng, e.lngLat.lat];
           renderSketch();
@@ -297,6 +341,7 @@ export function MapView(props: Props) {
         setHover(f ? { props: f.properties as MapFeatureProps, x: e.point.x, y: e.point.y } : null);
       });
       map.on("mouseout", () => {
+        cb.current.onCursor?.(null);
         if (!sketch.current.kind) cb.current.onHover(null);
         setHover(null);
       });
@@ -397,12 +442,51 @@ export function MapView(props: Props) {
     applyHover(hovered);
   }, [labelled, ready]);
 
-  // ---- fit to the file when it changes
+  // ---- fit requests (opening a file or a DEM)
   useEffect(() => {
     const map = mapRef.current;
-    if (!ready || !map || !bbox) return;
-    map.fitBounds(bbox, { padding: paddingRef.current, maxZoom: 18, duration: 900 });
-  }, [fileKey, ready]);
+    if (!ready || !map || !fit) return;
+    map.fitBounds(fit.bbox, { padding: paddingRef.current, maxZoom: 18, duration: 900 });
+  }, [fit, ready]);
+
+  // ---- DEM tiles, inserted under the vector layers
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    if (map.getLayer("dem")) map.removeLayer("dem");
+    if (map.getSource("dem")) map.removeSource("dem");
+    if (!dem) return;
+    map.addSource("dem", {
+      type: "raster",
+      tiles: [window.location.origin + terrain.tileUrl(dem.id, dem.style)],
+      tileSize: 256,
+      ...(dem.bounds ? { bounds: dem.bounds } : {}),
+      maxzoom: 22,
+    });
+    map.addLayer({ id: "dem", type: "raster", source: "dem", paint: { "raster-opacity": dem.opacity } }, "poly-fill");
+  }, [dem?.id, dem?.style, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (ready && map?.getLayer("dem") && dem) map.setPaintProperty("dem", "raster-opacity", dem.opacity);
+  }, [dem?.opacity, ready]);
+
+  // ---- overlay + marker
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    (map.getSource("overlay") as GeoJSONSource | undefined)?.setData(
+      overlay ? { type: "Feature", properties: {}, geometry: overlay } : EMPTY,
+    );
+  }, [overlay, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    (map.getSource("marker") as GeoJSONSource | undefined)?.setData(
+      marker ? { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: marker } } : EMPTY,
+    );
+  }, [marker, ready]);
 
   // ---- selection highlight
   useEffect(() => {

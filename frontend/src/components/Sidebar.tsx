@@ -5,6 +5,12 @@ import { formatBytes, timeAgo } from "../units";
 /** Files in /samples, served by the API. Open = upload now; download = try the upload flow yourself. */
 export const SAMPLES = [
   {
+    file: "quarry",
+    format: "DEM",
+    title: "Quarry yard, 2 surveys",
+    detail: "0.5 m DSMs + stockpile outlines",
+  },
+  {
     file: "site_survey.kml",
     format: "KML",
     title: "Site survey",
@@ -105,7 +111,7 @@ export function UploadZone({ upload, error, onFile, onOpenFailed, onDismissError
             <UploadIcon />
             <span className="dropzone-title">Drop a file or click to browse</span>
             <span className="dropzone-hint">
-              <kbd>.zip</kbd> Shapefile · <kbd>.kml</kbd> · <kbd>.kmz</kbd> — up to 50 MB
+              <kbd>.zip</kbd> Shapefile · <kbd>.kml</kbd> · <kbd>.kmz</kbd> · <kbd>.tif</kbd> DEM
             </span>
           </>
         )}
@@ -113,7 +119,7 @@ export function UploadZone({ upload, error, onFile, onOpenFailed, onDismissError
       <input
         ref={input}
         type="file"
-        accept=".zip,.kml,.kmz"
+        accept=".zip,.kml,.kmz,.tif,.tiff"
         className="sr-only"
         tabIndex={-1}
         onChange={(e) => {
@@ -160,6 +166,7 @@ export function SampleList({ busy, onOpen }: { busy: boolean; onOpen: (file: str
             >
               Open
             </button>
+            {s.file !== "quarry" && (
             <a
               className="icon-btn"
               href={`/samples/${s.file}`}
@@ -171,6 +178,7 @@ export function SampleList({ busy, onOpen }: { busy: boolean; onOpen: (file: str
                 <path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </a>
+            )}
           </span>
         </li>
       ))}

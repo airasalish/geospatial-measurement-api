@@ -170,8 +170,8 @@ export function EmptyState({ onSample, onBrowse, busy }: EmptyProps) {
         <button type="button" className="btn" onClick={() => onSample("site_survey.kml")} disabled={busy}>
           Try: site survey (KML)
         </button>
-        <button type="button" className="btn" onClick={() => onSample("farm_plots.zip")} disabled={busy}>
-          Try: 400 farm plots (SHP)
+        <button type="button" className="btn" onClick={() => onSample("quarry")} disabled={busy}>
+          Try: quarry volumes (DEM)
         </button>
       </div>
       <p className="empty-hint">
@@ -186,8 +186,8 @@ export function EmptyState({ onSample, onBrowse, busy }: EmptyProps) {
           <span>area error vs. geodesic ground truth</span>
         </div>
         <div>
-          <b>5k+/s</b>
-          <span>features measured, vectorised</span>
+          <b>Cut / fill</b>
+          <span>stockpile volumes from DEMs, survey vs survey</span>
         </div>
         <div>
           <b>Any CRS</b>

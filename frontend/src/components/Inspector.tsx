@@ -11,6 +11,9 @@ interface Props {
   units: UnitSystem;
   onClose: () => void;
   onZoom: () => void;
+  /** Present when an elevation model is open and this feature can be analysed on it. */
+  onVolume?: () => void;
+  onProfile?: () => void;
 }
 
 interface Loaded {
@@ -23,7 +26,7 @@ const PROJ_NAMES: Record<string, string> = {
   aeqd: "Azimuthal Equidistant",
 };
 
-export function Inspector({ fileId, index, name, units, onClose, onZoom }: Props) {
+export function Inspector({ fileId, index, name, units, onClose, onZoom, onVolume, onProfile }: Props) {
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -126,6 +129,16 @@ export function Inspector({ fileId, index, name, units, onClose, onZoom }: Props
         <button type="button" className="btn btn-sm btn-primary" onClick={onZoom}>
           Zoom to feature
         </button>
+        {onVolume && (
+          <button type="button" className="btn btn-sm btn-flag-outline" onClick={onVolume}>
+            Volume on DEM
+          </button>
+        )}
+        {onProfile && (
+          <button type="button" className="btn btn-sm btn-flag-outline" onClick={onProfile}>
+            Profile on DEM
+          </button>
+        )}
         <button type="button" className="btn btn-sm" onClick={copyGeometry} disabled={!data?.feature.geometry}>
           {copied ? "Copied ✓" : "Copy GeoJSON"}
         </button>
