@@ -43,6 +43,14 @@ services:
     image: traverse:local
     command: ["celery", "-A", "app.worker", "worker", "--loglevel=INFO", "--concurrency=2"]
     environment: *app-env
+    healthcheck:
+      # The image's default healthcheck probes HTTP; a worker serves none, so ask
+      # the worker itself over the broker.
+      test: ["CMD-SHELL", "celery -A app.worker inspect ping -d celery@$$HOSTNAME --timeout 5"]
+      interval: 15s
+      timeout: 15s
+      start_period: 20s
+      retries: 5
     depends_on:
       api: { condition: service_healthy }  # the API applies migrations first
 
