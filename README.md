@@ -1,7 +1,7 @@
 <p align="center"><img src="frontend/public/favicon.svg" width="72" alt="Traverse logo: a closed survey traverse of five stations"></p>
 
-<h1 align="center">traverse.</h1>
-<p align="center"><b>Survey-grade measurement for geospatial files and drone elevation models.</b><br>Vector measurement and DEM volumetrics: FastAPI service plus web UI</p>
+<h1 align="center">Geospatial File Measurement API</h1>
+<p align="center"><b>Upload a Shapefile or KML, get every feature back with its area or length in metres.</b><br>FastAPI · shapely · pyproj · measured in a projection chosen per feature, validated against geodesic ground truth</p>
 
 [![CI](https://github.com/airasalish/geospatial-measurement-api/actions/workflows/ci.yml/badge.svg)](https://github.com/airasalish/geospatial-measurement-api/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
@@ -9,101 +9,66 @@
 
 **Live demo: [traverse-survey.onrender.com](https://traverse-survey.onrender.com)** ·
 API docs: [/docs](https://traverse-survey.onrender.com/docs)
-<sub>(free tier: the first request after a quiet spell takes ~30 s to wake the server,
-and uploads reset when it restarts. The sample buttons recreate data in one click.)</sub>
+<sub>(free tier: the first request after a quiet spell takes ~30 s to wake the server.)</sub>
 
-A FastAPI service that accepts a **zipped Shapefile, KML or KMZ**, extracts every
-feature (ID, geometry type, geometry, CRS, attributes), and returns **areas,
-perimeters and lengths in metres**. Measurements agree with ellipsoidal (geodesic)
-ground truth to about **1 part in 10⁹** anywhere on Earth, poles included.
-
-It also measures **drone elevation models (DEM/DSM GeoTIFFs)**: stockpile, dump and
-pit **cut/fill volumes** with five base-surface methods, **survey-to-survey change**,
-3D surface area, slope-risk statistics and **haul-road profiles**, served as map
-tiles from Cloud-Optimised GeoTIFFs. See [Terrain and volumetrics](#terrain-and-volumetrics).
-
-It ships with **Traverse**, a map-first web UI (React + TypeScript + MapLibre)
-served by the same process: drop a file, see every feature on a map or satellite
-imagery with its measurement, and inspect exactly how each number was computed.
-
-![Traverse: a farm parcel selected on satellite imagery, with the inspector showing area, perimeter and the projection used](docs/screenshots/inspector-satellite.jpg)
-
-```text
-POST /api/files/                     upload + process  -> 201, file info
-GET  /api/files/{id}/                file info (status, CRS, feature count, bbox, ...)
-GET  /api/files/{id}/measurements/   per-feature area / perimeter / length + totals
-GET  /api/files/{id}/features/       per-feature geometry (GeoJSON), CRS, properties
-GET  /api/files/{id}/geojson/        whole file as a WGS84 FeatureCollection, for maps
-
-POST /api/rasters/                   upload a DEM/DSM GeoTIFF -> Cloud-Optimised GeoTIFF
-POST /api/rasters/{id}/volume/       cut / fill / net, 3D area, slope inside a polygon
-POST /api/rasters/{id}/volumes/      the same for every polygon of a file (stockpile report)
-POST /api/rasters/{id}/profile/      elevation profile and grades along a line
-GET  /api/rasters/{id}/altitude/     elevation at a point
-GET  /api/rasters/{id}/tiles/{z}/{x}/{y}.png   elevation | hillshade | slope | terrarium (3D)
-GET  /api/files/{id}/tiles/{z}/{x}/{y}.mvt     Mapbox Vector Tiles (ST_AsMVT on PostGIS)
-
-POST /api/auth/register · /api/auth/token · GET /api/auth/me      accounts (optional)
-GET|POST /api/projects/                                           sites / jobs per user
-GET  /health · /health/ready · /metrics                           liveness, readiness, Prometheus
+```bash
+curl -F "file=@samples/site_survey.kml" https://traverse-survey.onrender.com/api/files/
+curl https://traverse-survey.onrender.com/api/files/{id}/
+curl https://traverse-survey.onrender.com/api/files/{id}/measurements/
 ```
 
-**Highlights**
+The service accepts a **zipped Shapefile or a KML** (and KMZ), extracts every feature
+(ID, geometry type, geometry, CRS, properties), and measures it: **area** (and
+perimeter) for polygons, **length** for lines, nothing for points. Geometry is never
+measured in degrees: each feature is projected into an **equal-area** projection
+centred on it for area and an **equidistant** one for length. Results agree with
+ellipsoidal ground truth (`pyproj.Geod`) to about **1 part in 10⁹**, anywhere on
+Earth, which is roughly **10⁶× more accurate than the usual "pick the UTM zone"
+approach** ([comparison](#why-not-utm)).
 
-- **Accurate measurement anywhere.** Each feature is measured in its own projection:
-  equal-area (LAEA) for area, equidistant (AEQD) for length. Long edges are first
-  densified along geodesics. The test suite checks results against `pyproj.Geod`.
-- **Handles real-world files.** Multi-layer zips, nested folders, `__MACOSX` junk,
-  `.cpg` encodings, missing `.prj`, NULL shapes, 3D coordinates, self-intersecting
-  polygons, KML `MultiGeometry`, both styles of polygon holes, KML 2.0–2.2 namespaces.
-- **Fails one feature, not the file.** Every feature gets a status:
-  `MEASURED`, `NOT_APPLICABLE`, `UNSUPPORTED` or `FAILED`, with a human-readable note.
-- **Safe with hostile input.** Zip-bomb and zip-slip protection, XXE and
-  billion-laughs protection, streaming upload size limits, no recursion on
-  attacker-controlled nesting.
-- **Fast.** Vectorised batch pipeline: ~5–8k features/s on a laptop (about 3.5–5.5×
-  faster than the naive per-feature version). See [Performance](#performance).
-- **A UI worth using.** A map with survey-plan labels, a satellite toggle, a
-  virtualised feature ledger (sort, filter, search across 100k rows), a feature
-  inspector showing the exact projection, metric/imperial units, CSV/GeoJSON export,
-  and shareable deep links (`?file=…&feature=…`). See [Web UI](#web-ui).
-- **DEM volumetrics.** Cut/fill against TIN, plane, flat or design bases, or against an
-  earlier survey. True ground cell sizes in any CRS. Validated against analytic cone,
-  frustum and pit volumes. See [Terrain and volumetrics](#terrain-and-volumetrics).
-- **3D terrain.** Terrarium-encoded elevation tiles drive MapLibre's 3D terrain, with
-  stockpiles, outlines and labels draped over the surface.
-- **Production-shaped.** Alembic migrations, PostGIS (GiST index, `ST_AsMVT`), Celery
-  workers on Redis, COGs on S3 read in place through GDAL `/vsis3/`, JWT auth with
-  per-user isolation, Prometheus metrics, readiness probes, JSON logs, and a
-  docker-compose stack. See [Operations](#operations).
-- **Quality gates:** 177 backend tests (~94% branch coverage) run on SQLite *and* on
-  PostGIS, an integration test through the real queue, worker and object storage, 16
-  frontend unit tests, `mypy --strict`, strict TypeScript and `ruff`. Six CI jobs on
-  every push.
+![The web UI: a farm parcel selected on satellite imagery, with its area, perimeter and the projection used](docs/screenshots/inspector-satellite.jpg)
 
 ---
 
 ## Contents
 
+- [Requirements checklist](#requirements-checklist)
 - [Setup](#setup)
-- [Web UI](#web-ui)
-- [Terrain and volumetrics](#terrain-and-volumetrics)
-- [Operations](#operations)
 - [API](#api)
-- [Architecture](#architecture)
-- [CRS handling and measurement](#crs-handling-and-measurement)
+- [Architecture](#architecture): structure, file-processing flow, measurement flow, [CRS handling](#crs-handling)
 - [Design decisions](#design-decisions)
-- [Performance](#performance)
 - [Testing](#testing)
 - [Learnings](#learnings)
 - [Future scope](#future-scope)
+- [Beyond the brief](#beyond-the-brief): web UI, DEM volumetrics, production stack
+
+---
+
+## Requirements checklist
+
+Each requirement of the brief, where it is implemented, and the test that proves it.
+[`tests/test_requirements.py`](tests/test_requirements.py) follows the brief item by
+item; the other test modules go deeper.
+
+| # | Requirement | Implementation | Proof |
+|---|---|---|---|
+| 1 | FastAPI or Django | FastAPI, typed Pydantic contract, OpenAPI at `/docs` | `test_1_backend_is_fastapi` |
+| 2 | `POST /api/files/` accepts `.zip` Shapefile and `.kml` | [`app/api/files.py`](app/api/files.py), readers in [`app/geo/readers/`](app/geo/readers) (also KMZ, multi-layer zips) | `test_2_upload_accepts_kml_and_zipped_shapefile` |
+| 3 | Per feature: ID/index, geometry type, geometry, CRS, properties | `index`, `geometry_type`, `geometry` (GeoJSON, source CRS), `crs`, `properties` on every measurement item | `test_3_every_feature_has_id_type_geometry_crs_properties` |
+| 3 | Unsupported geometry handled gracefully | Per-feature status `UNSUPPORTED` / `FAILED` with a note; the file still completes | `test_3_unsupported_geometry_is_reported_not_crashed` |
+| 4 | Polygon area, LineString length, Point nothing | [`app/geo/measure.py`](app/geo/measure.py): `area_m2` (+ `perimeter_m`), `length_m`, `NOT_APPLICABLE` | `test_4_polygon_area_line_length_point_nothing` |
+| 5 | Don't measure in degrees; project first | Per-feature LAEA (area) / AEQD (length), recorded in `measurement_crs` ([CRS handling](#crs-handling)) | `test_5_measured_in_a_projected_crs_not_degrees`, 40+ accuracy tests in `test_measure.py` |
+| 6 | `GET /api/files/{id}/` with `id, filename, feature_count, crs, status` | Same object as the upload response | `test_6_file_information_matches_the_brief_example` |
+| 6 | `GET /api/files/{id}/measurements/` | Per-feature measurements + whole-file summary, paginated and filterable | `test_6_measurements_endpoint` |
+| 7 | README: setup, API, architecture, CRS, design decisions | This file | — |
+| 8 | Learnings, future scope | [Learnings](#learnings), [Future scope](#future-scope) | — |
 
 ---
 
 ## Setup
 
-Requires **Python 3.12+**. The geospatial dependencies (`shapely`, `pyproj`) ship
-binary wheels, so there is **no GDAL install**.
+Only **Python 3.12+** is needed. The geospatial libraries ship binary wheels, so
+there is **no GDAL or other system install**.
 
 ```bash
 git clone https://github.com/airasalish/geospatial-measurement-api.git
@@ -113,271 +78,72 @@ python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
-# Build the web UI once (Node 20+). FastAPI serves it at / when frontend/dist exists.
-npm --prefix frontend ci
-npm --prefix frontend run build
-
 uvicorn app.main:app --reload
 ```
 
-Open **http://localhost:8000** for the UI and **http://localhost:8000/docs** for the
-interactive API docs. The UI's sample buttons upload the files in [`samples/`](samples).
-
-**Frontend development** (hot reload, with API calls proxied to :8000):
-
-```bash
-npm --prefix frontend run dev      # http://localhost:5173
-```
-
-### Docker
-
-The image is multi-stage: Node builds the UI, then a slim Python image serves the
-API and UI from one process.
+The API is now at **http://localhost:8000/api/files/** with interactive docs at
+**http://localhost:8000/docs**. It uses SQLite in `./data/` and needs no other services.
+Try it with the files in [`samples/`](samples):
 
 ```bash
-docker build -t traverse .
-docker run -p 8000:8000 -v geo-data:/srv/data traverse       # single container: SQLite, sync processing
-docker compose up --build                                     # full stack: PostGIS, Redis, worker, S3, Prometheus
+curl -F "file=@samples/site_survey.kml" http://localhost:8000/api/files/       # KML: polygon with a hole, lines, point, Model
+curl -F "file=@samples/parcels_utm43n.zip" http://localhost:8000/api/files/    # Shapefile in UTM 43N
+curl -F "file=@samples/farm_plots.zip" http://localhost:8000/api/files/        # 3 layers, 442 features, EPSG:4326
+pytest                                                                          # run the tests
 ```
 
-### Deploy
+**Optional web UI** (needs Node 20+): build it once and the same server serves it at `/`.
 
-[`render.yaml`](render.yaml) is a one-click blueprint for [Render](https://render.com)
-(free plan; the Docker image reads `$PORT`). The same image runs unchanged on
-Railway, Fly.io or Cloud Run.
-
-### Configuration
-
-All settings are environment variables with a `GEO_` prefix. They can also be set
-in a `.env` file (see [`.env.example`](.env.example)).
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `GEO_DATABASE_URL` | `sqlite:///./data/geo.db` | Any SQLAlchemy URL (e.g. PostgreSQL) |
-| `GEO_MAX_UPLOAD_BYTES` | 50 MB | Upload size limit (enforced while streaming) |
-| `GEO_MAX_UNCOMPRESSED_BYTES` | 500 MB | Zip-bomb guard: total uncompressed size |
-| `GEO_MAX_COMPRESSION_RATIO` | 200 | Zip-bomb guard: compression ratio |
-| `GEO_MAX_ARCHIVE_MEMBERS` | 1000 | Max files inside a zip |
-| `GEO_MAX_FEATURES` | 250,000 | Max features per file |
-| `GEO_DEFAULT_PAGE_SIZE` / `GEO_MAX_PAGE_SIZE` | 100 / 1000 | Pagination |
-| `GEO_MAX_GEOJSON_FEATURES` | 100,000 | Cap for the map endpoint |
-| `GEO_CORS_ORIGINS` | *(none)* | Comma-separated origins, only needed if the UI is hosted elsewhere |
-| `GEO_MAX_RASTER_UPLOAD_BYTES` / `GEO_MAX_RASTER_PIXELS` | 500 MB / 250 M | DEM upload limits |
-| `GEO_STORAGE_BACKEND` | `local` | `local` (`GEO_STORAGE_DIR`) or `s3` (`GEO_S3_BUCKET`, `GEO_S3_ENDPOINT_URL`, keys) |
-| `GEO_TASK_MODE` | `sync` | `sync` (in the request) or `celery` (202 + worker; `GEO_REDIS_URL`) |
-| `GEO_AUTH_REQUIRED` | `false` | Require sign-in; needs `GEO_JWT_SECRET` (32+ bytes) |
-| `GEO_LOG_FORMAT` | `text` | `json` for log shippers |
-
----
-
-## Web UI
-
-**Traverse** is named after the surveyor's traverse: walk a chain of stations,
-measure every leg, close the loop. The mark is exactly that, a closed five-station
-traverse. The interface uses the visual language of a survey plan: paper and ink
-tones, a survey-flag orange, serif readouts and monospaced figures that line up like a
-field book. Everything on screen comes from the public API; the UI has no private
-endpoints.
-
-![Drawing an area on the map: live estimate while sketching, exact ellipsoidal value from the API on finish](docs/screenshots/draw-measure.jpg)
-
-![Farm-plot bundle: 442 parcels, tracks and borewells with area labels, plus the sortable ledger](docs/screenshots/farm-plots.jpg)
-
-| | |
-|---|---|
-| ![Landing view with sample files](docs/screenshots/landing.jpg) | ![KML site survey: polygon with a hole, roads, a fence, a point and an unsupported Model](docs/screenshots/site-survey.jpg) |
-
-- **Map.** Features are coloured by kind and status (failed and unsupported stand
-  out), with on-map area and length labels in the current units. Map or **satellite**
-  basemap, scale bar, hover tooltips.
-- **Readout.** Total area, length and perimeter, feature count, a status breakdown
-  bar, metric/imperial switch, CSV and GeoJSON export.
-- **Ledger.** A virtualised table (only visible rows are rendered, so 100k features
-  stay smooth): sort by any column, filter by status, search (`/` to focus). Click a
-  row to fly to the feature.
-- **Inspector.** Big readouts with exact values (m² and acres, m and ft), the
-  **projection behind each value** (e.g. "LAEA centred on 13.2°N 77.7°E" plus the PROJ
-  string to reproduce it), notes such as "invalid polygon repaired", source CRS and
-  all attributes. Copy the geometry as GeoJSON.
-- **Upload.** Drag and drop with real upload progress, then a processing state. Errors
-  show the API's code and message, with a link to the recorded FAILED file.
-- **Draw & measure.** No file? Sketch one. Pick **Area** or **Distance**, click
-  points on the map and watch a live on-the-sphere estimate. Double-click or press
-  `Enter` and the sketch goes through the real pipeline as a KML upload, coming back
-  with the exact ellipsoidal value. `⌫` undoes a point, `Esc` cancels.
-- **Linked hover.** Hovering a row in the ledger highlights that feature on the map,
-  and hovering a feature on the map highlights its row.
-- **Drop anywhere.** Drag a file over any part of the window to upload it.
-- **Animated totals.** Readout totals count up when a file opens or the units change.
-- **Shareable state.** `?file=<id>&feature=<n>&basemap=satellite` restores the exact
-  view. `Esc` closes the inspector.
-
-Basemaps are keyless: [OpenFreeMap](https://openfreemap.org) vector tiles and Esri
-World Imagery. Fonts are bundled (Latin subsets only), and MapLibre is split into its
-own long-cached chunk.
-
----
-
-## Terrain and volumetrics
-
-Drone surveys produce elevation models (DSM/DTM). Traverse turns them into the numbers
-a mine or construction site runs on: how much material is in each stockpile, how much
-was moved since the last survey, how steep the walls are, and the grade of a haul road.
-
-![Stockpile report: every outline measured on the latest survey, with cut, fill, net, 2D and 3D area, max height and max slope](docs/screenshots/terrain-report.jpg)
-
-**Try it:** open the live demo and click **Try: quarry volumes (DEM)**. It loads two
-0.5 m surveys of a quarry yard (January and March) plus the stockpile outlines. Then
-**Stockpile report**, click any row, switch the base surface, or pick **Survey** to see
-what changed between the two dates.
-
-### What it computes
-
-| Output | How |
-|---|---|
-| **Cut / fill / net** | Σ (DEM − base) × true cell area over cells whose centre is inside the polygon. Cut is material above the base (stockpile), fill is void below it (pit), the same convention as Pix4D and DroneDeploy |
-| **3D surface area** | Σ cell area × √(1 + (∂z/∂x)² + (∂z/∂y)²), from central differences in metres |
-| **Slope** | arctan of the gradient magnitude: mean, max, % of area steeper than a threshold (default 30°) |
-| **Profile** | Geodesically densified line, bilinear DEM samples, cumulative geodesic distance, climb and descent, mean grade, and the **max sustained grade** over ~5 cells (single-cell grades are noise) |
-| **Map tiles** | rio-tiler reads only the COG blocks or overviews needed. Hillshade (Horn, sun 315°/45°) uses each tile's true ground pixel size; cubic resampling *and* cubic reprojection (the nearest-neighbour default stair-steps slope) |
-
-### Base surfaces
-
-| Method | Base under the material | Use when |
-|---|---|---|
-| `triangulated` (default) | TIN through DEM samples along the boundary | Irregular ground |
-| `plane` | Least-squares plane through the boundary | Sloped, even ground |
-| `lowest` / `highest` / `mean` | Flat at that boundary elevation | Flat pads only; warns when boundary relief exceeds 1 m |
-| `custom` | Flat at a given elevation | Design or floor levels |
-| `surface` | **Another DEM**, resampled onto this grid (bilinear) | Survey-to-survey change, plan against actual |
-
-### Cell size in metres, in any CRS
-
-Volume errors start with cell area. A 0.5 m UTM cell 277 km from the central meridian
-is **0.4997 m** on the ground: UTM scale factor k = 1.00055, which makes areas 0.11%
-too big if ignored. Traverse divides projected cell sizes by the local scale factors
-from `pyproj.Proj.get_factors`, and for lon/lat DEMs computes geodesic cell width and
-height per row. The test suite checks that the same cone stored in UTM and in degrees
-gives the same volume.
-
-### Accuracy (checked with the sample surveys)
-
-The sample DEMs are synthetic so every volume has an exact answer: a cone, a frustum, an
-elliptic cone and an inverted frustum on undulating, sloped ground with 2 cm survey noise.
-
-| Feature | True volume | TIN base | Plane base | Lowest-point base | **Survey compare** |
-|---|---:|---:|---:|---:|---:|
-| Coal stockpile (cone) | 9,021 m³ | +1.8% | +0.9% | +22% | change: **5,484 m³** (true 5,477) |
-| Iron-ore fines (frustum) | 14,611 m³ | −4.7% | −2.0% | +28% | **14,619 m³ (+0.05%)** |
-| Overburden dump (elliptic cone) | 10,042 m³ | +0.5% | −3.7% | +71% | unchanged |
-| Sand pile (cone) | 753 m³ | −1.2% | −2.1% | +55% | unchanged |
-| Excavation (pit) | 14,462 m³ | +0.3% | +1.3% | −25% | deepened: **6,208 m³** (true 6,198) |
-
-What the table shows:
-- **Arithmetic isn't the limit; knowing the ground under the pile is.** With one survey,
-  any base surface is an estimate. Here the ground undulates by ±1.3 m, so TIN and plane
-  land within 0.3–4.7%.
-- **Comparing two surveys removes that uncertainty** (+0.05%). This is why mines fly the
-  same site repeatedly.
-- **A flat lowest-point base on sloped ground overestimates by 22–71%.** DroneDeploy's
-  docs warn about the same trap, and Traverse flags it in the response.
-
-![Survey compare: Iron-ore fines added since January, with the slope-risk layer](docs/screenshots/terrain-survey-compare.jpg)
-
-![Haul-road profile: elevation along the road, climb, descent and max sustained grade](docs/screenshots/terrain-profile.jpg)
-
-![3D terrain: the quarry yard with stockpiles, the pit and the haul road draped over the DEM (4x vertical exaggeration)](docs/screenshots/terrain-3d.jpg)
-
-**3D terrain** uses Terrarium-encoded tiles (`style=terrarium`, h = R·256 + G + B/256 − 32768)
-as a MapLibre `raster-dem` source. Heights are relative to the DEM minimum: outside the
-DEM MapLibre assumes 0 m, so absolute heights (~915 m here) would stand the site on a
-kilometre-high plinth. Tiles outside the DEM are served as flat 0 m tiles, never `204`:
-a raster-dem source can't decode an empty response, and failed DEM tiles stop MapLibre
-drawing the terrain at all. That bug blanked the whole map until I tracked it down.
-
-### Ingestion
-
-Uploads must be single-band, north-up GeoTIFFs with a CRS. Imagery (3+ byte bands) and
-rotated rasters are rejected with a clear message. Each upload is converted to a
-**Cloud-Optimised GeoTIFF** (512 px tiles, DEFLATE with the floating-point predictor,
-averaged overviews). Analyses then read only the blocks under a polygon, and low-zoom
-tiles read overviews. Elevation statistics come from overviews, so a 250-million-cell
-DEM never loads fully into memory. Blobs live behind a small storage interface (`put`,
-`gdal_path`, `delete`) so they can move to S3.
-
----
-
-## Operations
-
-The same image runs as a single container (the demo) or as a production-shaped stack.
-
-```text
-                  ┌──────────────────────────────────────┐
-  browser ──────► │ api  (FastAPI + built UI, uvicorn)   │── /metrics ◄── prometheus
-                  │  • uploads → 202, raw file → S3      │
-                  │  • analyses, tiles: read COGs in     │
-                  │    place via GDAL /vsis3/ (ranges)   │
-                  └───────┬───────────────┬──────────────┘
-                          │ enqueue       │ SQL (PostGIS: GiST, ST_AsMVT)
-                          ▼               ▼
-                       redis ◄──── worker (Celery, same code as sync mode)
-                                          │ parse, measure, COG-convert
-                                          ▼
-                                 S3-compatible storage (SeaweedFS locally, S3 in prod)
+```bash
+npm --prefix frontend ci && npm --prefix frontend run build
 ```
 
-| Concern | How |
-|---|---|
-| **Schema** | Alembic migrations, applied at API startup. A test runs autogenerate against the models and fails on any drift. PostGIS-only DDL (extension, `geom` column, GiST index) is dialect-guarded |
-| **Processing** | `GEO_TASK_MODE=celery`: the API stores the upload, creates the record (`PROCESSING`) and returns **202** with `Location`. The worker runs the *same* ingestion code as sync mode. Late acks + `prefetch=1`: a crashed worker's task is retried, not lost, and long DEM jobs don't queue behind each other |
-| **Storage** | Keys, not paths. COGs on S3 are opened as `/vsis3/bucket/key`; endpoint settings go to GDAL, credentials via rasterio's `AWSSession`. Downloads are SigV4 presigned redirects |
-| **Auth** | Off by default. With `GEO_AUTH_REQUIRED=true`: scrypt password hashes, HS256 JWTs, every file, DEM, analysis and tile scoped to its owner (others' ids return 404), optional projects. Refuses to start with a default or short secret |
-| **Health** | `/health` (liveness) and `/health/ready` (database, storage, queue), returning **503** with per-check status when degraded |
-| **Metrics** | Prometheus: request rate and latency by *route template* (bounded cardinality), uploads by kind and status, processing and terrain-analysis latency histograms |
-| **Logs** | `GEO_LOG_FORMAT=json`: one JSON object per line |
+**Docker:**
 
-**docker-compose:** `docker compose up --build` starts the API (UI and docs on :8000),
-the worker, PostGIS, Redis, S3 (SeaweedFS on :8333) and Prometheus (:9090). Startup is
-health-gated: the API waits for its dependencies, and the worker waits for the API so
-migrations run first. The worker's healthcheck pings it over the broker, because the
-image's default probe is HTTP and a worker serves none.
+```bash
+docker build -t geo-api . && docker run -p 8000:8000 geo-api   # API + UI, SQLite
+docker compose up --build                                       # + PostGIS, Redis worker, S3, Prometheus
+```
 
-**CI** (GitHub Actions, every push):
-
-| Job | What it proves |
-|---|---|
-| `backend` (3.12, 3.13) | ruff, `mypy --strict`, 177 tests on SQLite, coverage ≥ 90% |
-| `postgis` | The same suite against `postgis/postgis`: migrations, GiST index, `ST_AsMVT` |
-| `frontend` | strict TypeScript, unit tests, production build |
-| `compose` | Boots `docker-compose.yml`, checks readiness, pushes uploads through Redis, the containerised worker and S3, and checks Prometheus scrapes the API |
-| `docker` | Builds the single-container image and smoke-tests the UI and an upload |
+Settings are `GEO_*` environment variables (upload limits, database URL, ...); see
+[`.env.example`](.env.example) and the [full table](docs/operations.md#configuration).
 
 ---
 
 ## API
 
-Interactive OpenAPI docs are served at `/docs` (Swagger) and `/redoc`. Trailing
-slashes are optional.
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | **`/api/files/`** | Upload and process a file → `201` + file information |
+| `GET` | **`/api/files/{id}/`** | File information |
+| `GET` | **`/api/files/{id}/measurements/`** | Per-feature measurements and totals |
+| `GET` | `/api/files/` | List uploads (paginated) |
+| `DELETE` | `/api/files/{id}/` | Delete a file and its features |
+| `GET` | `/api/files/{id}/features/` · `/features/{index}/` | Features with full geometry (no measurements) |
+| `GET` | `/api/files/{id}/geojson/` | Whole file as a WGS84 FeatureCollection, streamed, for web maps |
+
+The first three are the brief's endpoints. Trailing slashes are optional. The
+terrain, tile and auth endpoints are listed under [Beyond the brief](#beyond-the-brief).
 
 ### `POST /api/files/` — upload and process
 
-`multipart/form-data` with a `file` field. Accepted formats:
+`multipart/form-data` with a `file` field.
 
 | Extension | Content |
 |---|---|
 | `.zip` | One or more Shapefiles (`.shp` + `.shx` + `.dbf`, optional `.prj` / `.cpg`), possibly in sub-folders |
 | `.kml` | KML 2.0 – 2.2 |
-| `.kmz` | Zipped KML (`doc.kml`) |
+| `.kmz` | Zipped KML |
 
 ```bash
 curl -F "file=@samples/site_survey.kml" http://localhost:8000/api/files/
 ```
 
-`201 Created`, with a `Location` header pointing at the new resource:
+`201 Created`, with `Location: /api/files/{id}/`:
 
 ```json
 {
-  "id": "c8efebc8-4fff-479f-a9bb-a94cca33f3fd",
+  "id": "5107372a-842a-4329-b4e8-59f12e78178b",
   "filename": "site_survey.kml",
   "format": "kml",
   "size_bytes": 1447,
@@ -389,13 +155,15 @@ curl -F "file=@samples/site_survey.kml" http://localhost:8000/api/files/
   "layers": ["Site 42 survey/Boundaries", "Site 42 survey/Linear", "Site 42 survey/Assets"],
   "bbox": [77.594, 12.9709, 77.5972, 12.9735],
   "warnings": [],
-  "processing_ms": 5.66,
-  "created_at": "2026-10-11T07:49:39.693416Z",
-  "processed_at": "2026-10-11T07:49:39.699683Z"
+  "processing_ms": 5.48,
+  "created_at": "2026-10-11T15:37:39.321430Z",
+  "processed_at": "2026-10-11T15:37:39.327505Z"
 }
 ```
 
-`crs` is the source CRS (`"MIXED"` if a zip's layers differ, `null` if unknown).
+`crs` is the file's source CRS: `"MIXED"` if a zip's layers differ, `null` if a
+Shapefile has no `.prj`. `status` is `COMPLETED` or `FAILED` (or `PROCESSING` in the
+optional queued mode, which returns `202`).
 
 **Errors** all share one shape: `{"error": {"code": ..., "message": ..., "file_id"?: ...}}`.
 
@@ -407,24 +175,35 @@ curl -F "file=@samples/site_survey.kml" http://localhost:8000/api/files/
 
 ### `GET /api/files/{id}/` — file information
 
-Returns the same object as the upload response. `GET /api/files/` lists all
-uploads (paginated), and `DELETE /api/files/{id}/` removes a file and its features.
+```bash
+curl http://localhost:8000/api/files/5107372a-842a-4329-b4e8-59f12e78178b/
+```
+
+Returns the same object as the upload, so it contains every field of the brief's
+example (`id`, `filename`, `feature_count`, `crs`, `status`) plus provenance
+(`sha256`, `size_bytes`, timestamps), `layers`, `bbox` and `warnings`. Unknown id: `404`.
 
 ### `GET /api/files/{id}/measurements/` — measurements
 
-Query parameters: `status` (e.g. `MEASURED`), `geometry_type` (e.g. `Polygon`,
-case-insensitive), `limit`, `offset`. `summary` always covers the whole file.
-`total` counts the features that match the filters.
+| Query parameter | Effect |
+|---|---|
+| `include_geometry=true` | Add each feature's GeoJSON geometry (source CRS). Off by default to keep pages small |
+| `status=MEASURED` | Only features with that status |
+| `geometry_type=Polygon` | Only that geometry type (case-insensitive) |
+| `bbox=minx,miny,maxx,maxy` | Only features intersecting a WGS84 box |
+| `limit`, `offset` | Pagination (default 100, max 1000) |
 
 ```bash
-curl "http://localhost:8000/api/files/{id}/measurements/"
+curl "http://localhost:8000/api/files/5107372a-842a-4329-b4e8-59f12e78178b/measurements/?include_geometry=true"
 ```
 
-```json
+```jsonc
 {
-  "file_id": "c8efebc8-4fff-479f-a9bb-a94cca33f3fd",
+  "file_id": "5107372a-842a-4329-b4e8-59f12e78178b",
+  "filename": "site_survey.kml",
+  "crs": "EPSG:4326",
   "units": {"area": "m2", "perimeter": "m", "length": "m"},
-  "summary": {
+  "summary": {                                  // always the whole file, whatever the filters
     "feature_count": 5,
     "total_area_m2": 32408.162,
     "total_perimeter_m": 1006.704,
@@ -432,37 +211,46 @@ curl "http://localhost:8000/api/files/{id}/measurements/"
     "by_status": {"MEASURED": 3, "NOT_APPLICABLE": 1, "UNSUPPORTED": 1},
     "by_geometry_type": {"LineString": 1, "Model": 1, "MultiLineString": 1, "Point": 1, "Polygon": 1}
   },
-  "total": 5,
-  "limit": 100,
-  "offset": 0,
+  "total": 5, "limit": 100, "offset": 0,       // total = features matching the filters
   "items": [
     {
-      "index": 0,
-      "source_id": "plot-1",
+      "index": 0,                               // feature ID: 0-based position in the file
+      "source_id": "plot-1",                    // the source's own id (KML <Placemark id>), if any
       "layer": "Site 42 survey/Boundaries",
       "geometry_type": "Polygon",
+      "crs": "EPSG:4326",
       "status": "MEASURED",
-      "area_m2": 32408.162,
-      "perimeter_m": 1006.704,
+      "area_m2": 32408.162,                     // pond (inner ring) subtracted
+      "perimeter_m": 1006.704,                  // outer ring + pond edge
       "length_m": null,
-      "measurement_crs": {
+      "measurement_crs": {                      // the exact projection behind each number
         "area": "+proj=laea +lat_0=13.0 +lon_0=77.6 +datum=WGS84 +units=m +no_defs",
         "perimeter": "+proj=aeqd +lat_0=13.0 +lon_0=77.6 +datum=WGS84 +units=m +no_defs"
       },
-      "note": null
+      "note": null,
+      "properties": {"name": "Plot 1 (with pond)", "survey_date": "2024-03-14", "surveyor": "Team A"},
+      "geometry": {"type": "Polygon", "coordinates": [[[77.5946, 12.9716, 0.0], [77.5966, 12.9716, 0.0], "..."], ["...pond..."]]}
     },
     {
       "index": 1, "source_id": "road-1", "layer": "Site 42 survey/Linear",
-      "geometry_type": "LineString", "status": "MEASURED",
-      "area_m2": null, "perimeter_m": null, "length_m": 351.651, "...": "..."
+      "geometry_type": "LineString", "crs": "EPSG:4326", "status": "MEASURED",
+      "area_m2": null, "perimeter_m": null, "length_m": 351.651,
+      "measurement_crs": {"length": "+proj=aeqd +lat_0=13.0 +lon_0=77.6 +datum=WGS84 +units=m +no_defs"},
+      "note": null, "properties": {"name": "Access road"},
+      "geometry": {"type": "LineString", "coordinates": [[77.594, 12.971], [77.5955, 12.9712], [77.5972, 12.9709]]}
+    },
+    { "index": 2, "geometry_type": "MultiLineString", "status": "MEASURED", "length_m": 382.938, "...": "..." },
+    {
+      "index": 3, "source_id": "gcp-1", "geometry_type": "Point", "crs": "EPSG:4326",
+      "status": "NOT_APPLICABLE", "area_m2": null, "perimeter_m": null, "length_m": null,
+      "measurement_crs": {}, "note": null, "properties": {"name": "GCP-1"},
+      "geometry": {"type": "Point", "coordinates": [77.5956, 12.9723, 0.0]}
     },
     {
-      "index": 3, "source_id": "gcp-1", "geometry_type": "Point",
-      "status": "NOT_APPLICABLE", "...": "..."
-    },
-    {
-      "index": 4, "source_id": "tower-1", "geometry_type": "Model",
-      "status": "UNSUPPORTED", "note": "KML <Model> geometries are not supported.", "...": "..."
+      "index": 4, "source_id": "tower-1", "geometry_type": "Model", "crs": "EPSG:4326",
+      "status": "UNSUPPORTED", "area_m2": null, "perimeter_m": null, "length_m": null,
+      "measurement_crs": {}, "note": "KML <Model> geometries are not supported.",
+      "properties": {"name": "Tower model"}, "geometry": null
     }
   ]
 }
@@ -480,42 +268,11 @@ curl "http://localhost:8000/api/files/{id}/measurements/"
 `measurement_crs` records the exact projection behind each number, so any value can
 be reproduced independently.
 
-### `GET /api/files/{id}/geojson/` — map-ready FeatureCollection
-
-Every feature in **WGS84**, with its measurement as properties (`index`, `name`,
-`geometry_type`, `status`, `area_m2`, `perimeter_m`, `length_m`, `layer`,
-`source_id`). It is built for web maps: the WGS84 geometry is computed once at
-ingestion (vectorised), stored as GeoJSON text, and **streamed** from a server-side
-cursor without being parsed, so memory stays flat. `name` is the feature's name
-attribute, falling back to an id-like one (`plot_no`, `well_id`, …). The
-`X-Total-Count` and `X-Truncated` headers report the cap (`GEO_MAX_GEOJSON_FEATURES`).
-Geometries that can't be placed on Earth (no CRS and coordinates that aren't
-lon/lat) come back as `null`.
-
-### `GET /api/files/{id}/features/` — features
-
-Each feature's identifier, geometry type, **GeoJSON geometry in the source CRS**,
-CRS, and properties. Same pagination and `geometry_type` filter.
-`GET /api/files/{id}/features/{index}/` returns a single feature.
-
-```json
-{
-  "index": 0,
-  "source_id": null,
-  "layer": "parcels",
-  "geometry_type": "Polygon",
-  "crs": "EPSG:32643",
-  "geometry": {"type": "Polygon", "coordinates": [[[777000.0, 1435000.0], [777000.0, 1435100.0], "..."]]},
-  "properties": {"parcel_id": "P-001", "owner": "Ravi", "surveyed": "2024-01-15"}
-}
-```
-
-`index` (0-based position in the file) is the stable feature ID. `source_id` holds
-the source's own identifier when there is one (KML `<Placemark id>`).
-
 ---
 
 ## Architecture
+
+### Application structure
 
 ```text
 app/
@@ -557,51 +314,55 @@ unchanged.
 
 ### File-processing flow
 
-```text
-POST /api/files/
-  │ 1. extension check (415) ─ before reading the body
-  │ 2. stream the upload in 1 MB chunks, abort past the size limit (413)
-  ▼
-ingest_upload()
-  │ 3. INSERT file row, status=PROCESSING, sha256; commit (so failures stay visible)
-  │ 4. sniff content vs extension (a .zip must start with PK\x03\x04, etc.)
-  │ 5. reader -> Dataset of Layers, each with a CRS and a lazy feature iterator
-  │      .zip: SafeZip -> group members by stem -> per layer: .prj -> CRS, .cpg -> encoding,
-  │            pyshp -> shapely (ring orientation -> holes)
-  │      .kml: defusedxml -> iterative walk of Document/Folder -> Placemark -> geometry + ExtendedData
-  │ 6. for each batch of 2,000 features:
-  │      measure_batch()  ── vectorised (see below)
-  │      shapely.to_geojson() for the whole batch
-  │      Core executemany INSERT
-  │ 7. status=COMPLETED, crs, layers, warnings, processing_ms; commit
-  │
-  └─ on any error: rollback (no partial features), status=FAILED + error; 422 with file_id
+```mermaid
+flowchart TD
+    A["POST /api/files/"] --> B{"extension .zip / .kml / .kmz?"}
+    B -- no --> E415["415 unsupported_file_type"]
+    B -- yes --> C["stream body in 1 MB chunks<br/>abort past size limit"]
+    C -- too big --> E413["413 file_too_large"]
+    C --> D["INSERT file row, status=PROCESSING, sha256<br/>commit, so a failure stays visible"]
+    D --> F{"sniff content<br/>(a .zip must start with PK)"}
+    F -- ".zip" --> G["SafeZip: size, ratio and member limits<br/>group members by stem into layers<br/>.prj → CRS, .cpg → encoding<br/>pyshp → shapely"]
+    F -- ".kml/.kmz" --> H["defusedxml (no DTDs / entities)<br/>iterative walk of Document / Folder / Placemark<br/>geometry + ExtendedData"]
+    G --> I["lazy feature iterator per layer"]
+    H --> I
+    I --> J["batches of 2,000 features"]
+    J --> K["measure_batch (vectorised)"]
+    K --> L["to_geojson + bulk INSERT"]
+    L --> J
+    L --> M["status=COMPLETED, crs, layers, warnings<br/>201 + Location"]
+    F -. any error .-> R["rollback features (none partial)<br/>status=FAILED + error<br/>422 invalid_file + file_id"]
+    G -. error .-> R
+    H -. error .-> R
+    K -. error .-> R
 ```
 
 ### Measurement flow
 
-```text
-measure_batch(features, source_crs)
-  1. classify (per feature, cheap):  None/empty/point/unsupported -> settled now
-                                     unknown CRS -> lon/lat-looking? assume 4326 : FAILED
-                                     else split into polygonal + lineal parts
-  2. polygonal parts (numpy array):  -> WGS84 (one pyproj call)
-                                     -> make_valid() only where is_valid() is False
-                                     -> geodesic densify only where a segment > 1 km
-                                     -> group by snapped centroid -> LAEA -> shapely.area
-                                                                 -> AEQD -> shapely.length
-  3. lineal parts:                   -> WGS84 -> densify -> AEQD -> shapely.length
-  4. non-finite results -> FAILED;   values rounded to mm
+```mermaid
+flowchart TD
+    S["feature geometry + source CRS"] --> T{"classify"}
+    T -- "point / empty / no geometry" --> NA["NOT_APPLICABLE"]
+    T -- "Model, Track, MultiPatch" --> UN["UNSUPPORTED + note"]
+    T -- "no CRS, coordinates not lon/lat" --> FA["FAILED: refuse to guess"]
+    T -- "no CRS, lon/lat-looking" --> AS["assume EPSG:4326 + note"]
+    T -- "polygonal / lineal parts" --> W["reproject to WGS84<br/>(one vectorised pyproj call per batch)"]
+    AS --> W
+    W --> V["make_valid() only where is_valid() is False"]
+    V --> DZ["densify along the geodesic<br/>only segments longer than 1 km"]
+    DZ --> CTR["projection centre = centroid<br/>snapped to a 0.1° grid (cached transformers)"]
+    CTR --> LAEA["LAEA (equal-area) → shapely.area → area_m2"]
+    CTR --> AEQD["AEQD (equidistant) → shapely.length → perimeter_m / length_m"]
+    LAEA --> RND["non-finite → FAILED; round to mm<br/>store values + measurement_crs"]
+    AEQD --> RND
 ```
 
----
+### CRS handling
 
-## CRS handling and measurement
+The brief says not to measure in degrees and to project first. How the projection
+is chosen decides how accurate the answer is.
 
-The brief says not to compute area or distance in degrees, and to project first.
-How you choose that projection decides how accurate the answer is.
-
-### The strategy
+#### The strategy
 
 1. **Find the source CRS.** For KML it is always WGS84 (OGC KML spec). For a
    Shapefile it comes from the `.prj`. If the `.prj` is missing and every coordinate
@@ -624,7 +385,7 @@ How you choose that projection decides how accurate the answer is.
      (a 120 km test line comes out at 1e-6).
 5. **Measure in metres** with shapely and round to millimetres.
 
-### Why not UTM?
+#### Why not UTM?
 
 UTM is the usual choice, and it is what I first considered. It has three problems:
 
@@ -652,7 +413,7 @@ Accuracy against `pyproj.Geod` (Karney's ellipsoidal algorithms):
 | 120 km pipeline, 60°N | 157,097.8 | 1.0e-6 |
 | 500 km line | 471,122.4 | 1.3e-8 |
 
-### Why project at all, instead of computing geodesics directly?
+#### Why project at all, instead of computing geodesics directly?
 
 `pyproj.Geod.geometry_area_perimeter` gives the ground truth directly, and it is
 what the tests use. The brief explicitly asks for a projected-CRS approach, and that
@@ -660,7 +421,7 @@ approach generalises: the same projected geometry supports buffers, intersection
 and other planar operations a real platform needs. Geodesic computation is the
 right tool to *validate* the projected results, and that is how it is used here.
 
-### Performance of the CRS step
+#### Performance of the CRS step
 
 Creating a pyproj `Transformer` costs milliseconds, so transformers are cached
 (LRU). Projection centres are snapped to a **0.1° grid** so nearby features share
@@ -676,6 +437,8 @@ it shifts the AEQD centre by at most ~8 km (error under 1e-6).
 |---|---|---|
 | **FastAPI** | Typed request/response models produce the OpenAPI docs for free. Async upload streaming. Light weight for a single-resource service. | Django + DRF: better admin and ORM migrations, but heavier than this scope needs. |
 | **pyshp + defusedxml + shapely + pyproj** instead of GDAL/Fiona/GeoPandas | Pure wheels: `pip install` works on Windows, macOS and slim Docker with no system GDAL. Full control over error handling, so one bad feature never sinks the file. | GeoPandas + pyogrio: faster reading and more formats, but a ~100 MB native dependency, and less control when a single feature is malformed. Would revisit for very large files. |
+| **A projection per feature: LAEA for area, AEQD for length**, centred on the feature | Equal-area is exact for area by construction; centring keeps distance error under 1e-5 for features up to ~100 km. Works at any latitude and across zone boundaries. ~10⁻⁹ vs geodesic truth ([table](#why-not-utm)) | Local UTM zone: the textbook answer, but 0.05–0.2% scale error, zone-crossing problems, nothing past 84°N. One fixed CRS (e.g. Web Mercator): area inflated by 1/cos²(lat). `Geod` directly: exact, but the brief asks for projection, and planar geometry is what later operations need (we use `Geod` to *test*) |
+| **Geometry opt-in on `/measurements/`** (`?include_geometry=true`) | Measurement pages stay small (a parcel can have thousands of vertices); clients that need shapes ask for them, or use `/features/` or the streamed `/geojson/` | Always include geometry: simplest contract, but 10–100× larger responses for table views |
 | **Two processing modes, one code path**: `sync` (in the request) and `celery` (202 + worker) | Sync keeps the demo a single container with immediate results. Celery handles large files and DEM conversion without tying up API workers. Both call the same `process_record` / `process_raster_record`, so behaviour can't diverge | Async-only (always queue): needs Redis even for the demo. FastAPI `BackgroundTasks`: no retries, and lost on restart |
 | **Measure at upload time, store results** | Reads (`GET .../measurements/`) are pure DB queries, cheap and paginated. Summaries are SQL aggregates. | Compute on every GET: no storage, but repeated CPU work on every read. |
 | **SQLite or PostgreSQL/PostGIS** behind one model; geometry stored as GeoJSON text plus bbox columns, and a native PostGIS `geom` column on Postgres | The demo runs with no database server; production gets GiST-indexed geometry and `ST_AsMVT`. Portable bbox columns keep spatial filtering and vector tiles working on both | GeoAlchemy2 geometry types in the ORM: ties the models to PostGIS and loses the zero-setup mode |
@@ -703,45 +466,21 @@ it shifts the AEQD centre by at most ~8 km (error under 1e-6).
 
 ---
 
-## Performance
-
-Run `python -m scripts.benchmark --features 50000` to generate a synthetic 50k-polygon
-Shapefile and time the full ingestion: read, measure, encode and insert.
-
-| Version | Throughput (50k polygons, laptop) |
-|---|---|
-| Naive: per-feature transforms, ORM inserts | ~1,400 features/s |
-| Vectorised batch pipeline (current) | **~5,000–7,800 features/s** |
-
-What made the difference, as found by profiling with `cProfile`:
-
-1. **Vectorised reprojection.** One pyproj call per batch instead of three per
-   feature, and one call per *projection-centre group* instead of per feature.
-2. **Recomputed cache keys.** `crs.to_wkt()` was running for every feature
-   (2.2 s per 20k features). It now runs once per batch.
-3. **Core `executemany` instead of ORM bulk insert.** Skips per-row ORM bookkeeping.
-4. **Vectorised `shapely.to_geojson`**, stored as text: no dict round trip through `json`.
-5. **Conditional work.** `make_valid` and densification run only where they are needed,
-   based on vectorised `is_valid` and vectorised geodesic segment lengths.
-
-The remaining time is mostly the pure-Python Shapefile reader. See Future scope.
-
----
-
 ## Testing
 
 ```bash
-pytest                                   # 177 tests on SQLite (~94% branch coverage)
+pytest                                   # 193 tests on SQLite (~94% branch coverage)
+pytest tests/test_requirements.py -v     # the brief, requirement by requirement
+ruff check . && ruff format --check . && mypy app     # lint, format, mypy --strict
 GEO_TEST_DATABASE_URL=postgresql+psycopg://... pytest   # the same suite on PostGIS
-GEO_INTEGRATION=1 pytest -m integration  # against `docker compose up` (real worker, Redis, S3)
-ruff check . && ruff format --check . && mypy app
-
-npm --prefix frontend test               # 16 unit tests
-npm --prefix frontend run typecheck
 ```
+
+CI (GitHub Actions) runs all of this on Python 3.12 and 3.13, again against PostGIS,
+plus the frontend checks, a Docker smoke test and the full compose stack.
 
 | Suite | What it covers |
 |---|---|
+| `tests/test_requirements.py` | **The brief, one test per requirement**, in the brief's order |
 | `tests/test_measure.py` | **Accuracy against geodesic ground truth** at the equator, high latitude, the southern hemisphere, UTM zone edges and >84°N. Holes, multipolygons, 3D input, projected CRSs (UTM, Web Mercator), non-WGS84 datums, invalid-geometry repair |
 | `tests/test_readers.py` | KML namespaces, folders, ExtendedData, hole encodings, MultiGeometry, XXE, entity expansion, deep nesting, KMZ. Shapefile layers, folders, `.cpg`, missing parts, NULL shapes. Zip bombs, corrupt archives, content sniffing |
 | `tests/test_terrain.py` | **Volumes against analytic cones, pits and frusta**: every base surface, sloped ground, survey-to-survey difference, a geographic vs a projected DEM, the UTM scale correction, 3D area and slope on a 45° plane, nodata, profiles, COG layout and overviews, all tile styles, terrarium decoding |
@@ -784,7 +523,23 @@ Test inputs are built in code (`tests/factories.py`), not stored as binary fixtu
   presigning, MinIO's public images disappearing, and a 204 tile silently blanking 3D
   terrain. Running the real stack in CI is what caught them.
 
+---
+
 ## Future scope
+
+For the measurement API:
+
+- **More formats.** GeoJSON, GeoPackage, DXF and GML, through a GDAL (pyogrio) reader
+  for high-volume ingestion; the pure-Python Shapefile reader is now the bottleneck.
+- **Antimeridian-crossing features.** Split at ±180° before measuring.
+- **`?crs=` on outputs.** Return geometry reprojected to any CRS (e.g. RFC 7946 WGS84)
+  as well as the source CRS.
+- **Idempotent re-uploads** keyed by the stored `sha256`, and resumable uploads for
+  large archives.
+- **Streaming everything.** Stream the zip from object storage instead of buffering
+  the upload, so file size is bounded by disk, not memory.
+
+For a drone-survey platform (some of this is started, see below):
 
 - **Orthomosaics and point clouds.** Serve RGB orthos from COGs next to the DEMs, and
   point clouds or meshes as 3D Tiles (Cesium), as a drone platform needs.
@@ -799,6 +554,25 @@ Test inputs are built in code (`tests/factories.py`), not stored as binary fixtu
 - **Deployment.** A Helm chart with separate API and worker autoscaling, OpenTelemetry
   tracing across API → queue → worker, and S3 lifecycle rules for raw uploads.
 - **Antimeridian-crossing features.** Split at ±180° before measuring.
+
+---
+
+## Beyond the brief
+
+The measurement API above is the assignment. To make it closer to what a drone-survey
+platform runs on, the same service also has:
+
+| | |
+|---|---|
+| **[Web UI](docs/web-ui.md)** | A map-first React + TypeScript + MapLibre client using only the public API: map/satellite basemaps, a virtualised feature ledger, an inspector that shows the projection behind each number, drawing and measuring, CSV/GeoJSON export, deep links |
+| **[DEM volumetrics](docs/terrain.md)** | Drone elevation models (GeoTIFF → Cloud-Optimised GeoTIFF): stockpile cut/fill with five base surfaces, survey-to-survey change, 3D area, slope, haul-road profiles, hillshade/slope tiles and 3D terrain, validated against analytic volumes |
+| **[Production stack](docs/operations.md)** | Alembic migrations, PostGIS (GiST index, `ST_AsMVT` vector tiles), Celery workers on Redis, S3 storage read in place by GDAL, optional JWT auth with tenant isolation, Prometheus metrics, readiness probes, docker-compose, six CI jobs |
+| **[Performance](docs/performance.md)** | Vectorised batch pipeline: ~5–8k features/s, 3.5–5.5× faster than per-feature processing, and how profiling found it |
+
+| ![Stockpile volumes report on two drone surveys](docs/screenshots/terrain-report.jpg) | ![Farm-plot bundle: 442 parcels with area labels and the sortable ledger](docs/screenshots/farm-plots.jpg) |
+|---|---|
+
+None of it is needed to run or evaluate the API: `pip install` + `uvicorn` is enough.
 
 ## License
 
