@@ -2,7 +2,7 @@
 # database lives on ephemeral disk, which is fine for a demo.
 services:
   - type: web
-    name: field-ledger
+    name: traverse-survey
     runtime: docker
     plan: free
     healthCheckPath: /health

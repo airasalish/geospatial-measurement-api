@@ -7,8 +7,8 @@
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**Live demo: [field-ledger.onrender.com](https://field-ledger.onrender.com)** ·
-API docs: [/docs](https://field-ledger.onrender.com/docs)
+**Live demo: [traverse-survey.onrender.com](https://traverse-survey.onrender.com)** ·
+API docs: [/docs](https://traverse-survey.onrender.com/docs)
 <sub>(free tier: the first request after a quiet spell takes ~30 s to wake the server,
 and uploads reset when it restarts. The sample buttons recreate data in one click.)</sub>
 
