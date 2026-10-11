@@ -1,4 +1,4 @@
-# Geospatial File Measurement API
+# Geospatial File Measurement API · Field Ledger
 
 [![CI](https://github.com/airasalish/geospatial-measurement-api/actions/workflows/ci.yml/badge.svg)](https://github.com/airasalish/geospatial-measurement-api/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
@@ -9,11 +9,18 @@ feature (ID, geometry type, geometry, CRS, attributes), and returns **areas,
 perimeters and lengths in metres**. Measurements agree with ellipsoidal (geodesic)
 ground truth to about **1 part in 10⁹** anywhere on Earth, poles included.
 
+It ships with **Field Ledger**, a map-first web UI (React + TypeScript + MapLibre)
+served by the same process: drop a file, see every feature on a map or satellite
+imagery with its measurement, and inspect exactly how each number was computed.
+
+![Field Ledger: a farm parcel selected on satellite imagery, with the inspector showing area, perimeter and the projection used](docs/screenshots/inspector-satellite.jpg)
+
 ```text
 POST /api/files/                     upload + process  -> 201, file info
-GET  /api/files/{id}/                file info (status, CRS, feature count, ...)
+GET  /api/files/{id}/                file info (status, CRS, feature count, bbox, ...)
 GET  /api/files/{id}/measurements/   per-feature area / perimeter / length + totals
 GET  /api/files/{id}/features/       per-feature geometry (GeoJSON), CRS, properties
+GET  /api/files/{id}/geojson/        whole file as a WGS84 FeatureCollection, for maps
 ```
 
 **Highlights**
@@ -31,14 +38,20 @@ GET  /api/files/{id}/features/       per-feature geometry (GeoJSON), CRS, proper
   attacker-controlled nesting.
 - **Fast.** Vectorised batch pipeline: ~5–8k features/s on a laptop (about 3.5–5.5×
   faster than the naive per-feature version). See [Performance](#performance).
-- **Quality gates:** 88 tests at ~94% branch coverage, `mypy --strict`, `ruff`, and CI
-  that also builds the Docker image and smoke-tests it.
+- **A UI worth using.** A map with survey-plan labels, a satellite toggle, a
+  virtualised feature ledger (sort, filter, search across 100k rows), a feature
+  inspector showing the exact projection, metric/imperial units, CSV/GeoJSON export,
+  and shareable deep links (`?file=…&feature=…`). See [Web UI](#web-ui).
+- **Quality gates:** 104 backend tests at ~95% branch coverage, 11 frontend unit tests,
+  `mypy --strict`, strict TypeScript, `ruff`, and CI that builds the Docker image and
+  smoke-tests it end to end.
 
 ---
 
 ## Contents
 
 - [Setup](#setup)
+- [Web UI](#web-ui)
 - [API](#api)
 - [Architecture](#architecture)
 - [CRS handling and measurement](#crs-handling-and-measurement)
@@ -63,18 +76,37 @@ python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
+# Build the web UI once (Node 20+). FastAPI serves it at / when frontend/dist exists.
+npm --prefix frontend ci
+npm --prefix frontend run build
+
 uvicorn app.main:app --reload
 ```
 
-Open the interactive docs at **http://localhost:8000/docs** and try the files in
-[`samples/`](samples).
+Open **http://localhost:8000** for the UI and **http://localhost:8000/docs** for the
+interactive API docs. The UI's sample buttons upload the files in [`samples/`](samples).
+
+**Frontend development** (hot reload, with API calls proxied to :8000):
+
+```bash
+npm --prefix frontend run dev      # http://localhost:5173
+```
 
 ### Docker
 
+The image is multi-stage: Node builds the UI, then a slim Python image serves the
+API and UI from one process.
+
 ```bash
-docker build -t geo-api .
-docker run -p 8000:8000 -v geo-data:/srv/data geo-api
+docker build -t field-ledger .
+docker run -p 8000:8000 -v geo-data:/srv/data field-ledger
 ```
+
+### Deploy
+
+[`render.yaml`](render.yaml) is a one-click blueprint for [Render](https://render.com)
+(free plan; the Docker image reads `$PORT`). The same image runs unchanged on
+Railway, Fly.io or Cloud Run.
 
 ### Configuration
 
@@ -90,6 +122,43 @@ in a `.env` file (see [`.env.example`](.env.example)).
 | `GEO_MAX_ARCHIVE_MEMBERS` | 1000 | Max files inside a zip |
 | `GEO_MAX_FEATURES` | 250,000 | Max features per file |
 | `GEO_DEFAULT_PAGE_SIZE` / `GEO_MAX_PAGE_SIZE` | 100 / 1000 | Pagination |
+| `GEO_MAX_GEOJSON_FEATURES` | 100,000 | Cap for the map endpoint |
+| `GEO_CORS_ORIGINS` | *(none)* | Comma-separated origins, only needed if the UI is hosted elsewhere |
+
+---
+
+## Web UI
+
+**Field Ledger** uses the visual language of a survey plan: paper and ink tones, a
+survey-flag accent, serif readouts and monospaced figures that line up like a field
+book. Everything on screen comes from the public API; the UI has no private endpoints.
+
+![Farm-plot bundle: 442 parcels, tracks and borewells with area labels, plus the sortable ledger](docs/screenshots/farm-plots.jpg)
+
+| | |
+|---|---|
+| ![Landing view with sample files](docs/screenshots/landing.jpg) | ![KML site survey: polygon with a hole, roads, a fence, a point and an unsupported Model](docs/screenshots/site-survey.jpg) |
+
+- **Map.** Features are coloured by kind and status (failed and unsupported stand
+  out), with on-map area and length labels in the current units. Map or **satellite**
+  basemap, scale bar, hover tooltips.
+- **Readout.** Total area, length and perimeter, feature count, a status breakdown
+  bar, metric/imperial switch, CSV and GeoJSON export.
+- **Ledger.** A virtualised table (only visible rows are rendered, so 100k features
+  stay smooth): sort by any column, filter by status, search (`/` to focus). Click a
+  row to fly to the feature.
+- **Inspector.** Big readouts with exact values (m² and acres, m and ft), the
+  **projection behind each value** (e.g. "LAEA centred on 13.2°N 77.7°E" plus the PROJ
+  string to reproduce it), notes such as "invalid polygon repaired", source CRS and
+  all attributes. Copy the geometry as GeoJSON.
+- **Upload.** Drag and drop with real upload progress, then a processing state. Errors
+  show the API's code and message, with a link to the recorded FAILED file.
+- **Shareable state.** `?file=<id>&feature=<n>&basemap=satellite` restores the exact
+  view. `Esc` closes the inspector.
+
+Basemaps are keyless: [OpenFreeMap](https://openfreemap.org) vector tiles and Esri
+World Imagery. Fonts are bundled (Latin subsets only), and MapLibre is split into its
+own long-cached chunk.
 
 ---
 
@@ -126,6 +195,7 @@ curl -F "file=@samples/site_survey.kml" http://localhost:8000/api/files/
   "crs": "EPSG:4326",
   "feature_count": 5,
   "layers": ["Site 42 survey/Boundaries", "Site 42 survey/Linear", "Site 42 survey/Assets"],
+  "bbox": [77.594, 12.9709, 77.5972, 12.9735],
   "warnings": [],
   "processing_ms": 5.66,
   "created_at": "2026-10-11T07:49:39.693416Z",
@@ -218,6 +288,18 @@ curl "http://localhost:8000/api/files/{id}/measurements/"
 `measurement_crs` records the exact projection behind each number, so any value can
 be reproduced independently.
 
+### `GET /api/files/{id}/geojson/` — map-ready FeatureCollection
+
+Every feature in **WGS84**, with its measurement as properties (`index`, `name`,
+`geometry_type`, `status`, `area_m2`, `perimeter_m`, `length_m`, `layer`,
+`source_id`). It is built for web maps: the WGS84 geometry is computed once at
+ingestion (vectorised), stored as GeoJSON text, and **streamed** from a server-side
+cursor without being parsed, so memory stays flat. `name` is the feature's name
+attribute, falling back to an id-like one (`plot_no`, `well_id`, …). The
+`X-Total-Count` and `X-Truncated` headers report the cap (`GEO_MAX_GEOJSON_FEATURES`).
+Geometries that can't be placed on Earth (no CRS and coordinates that aren't
+lon/lat) come back as `null`.
+
 ### `GET /api/files/{id}/features/` — features
 
 Each feature's identifier, geometry type, **GeoJSON geometry in the source CRS**,
@@ -245,7 +327,7 @@ the source's own identifier when there is one (KML `<Placemark id>`).
 
 ```text
 app/
-├── main.py              App factory, error handler, /health
+├── main.py              App factory, error handler, /health, serves the built UI
 ├── config.py            Settings from environment variables (pydantic-settings)
 ├── db.py                Engine/session; SQLite pragmas (WAL, foreign keys)
 ├── models.py            ORM: UploadedFile 1──* Feature
@@ -261,6 +343,12 @@ app/
     ├── readers/         Format detection + Shapefile, KML/KMZ readers
     ├── crs.py           CRS description, reprojection, densification, local projections
     └── measure.py       Vectorised batch measurement
+
+frontend/                React 18 + TypeScript (strict) + MapLibre GL, built with Vite
+├── src/api.ts           Typed client mirroring app/schemas.py (XHR upload progress)
+├── src/units.ts         Unit conversion and formatting (unit-tested)
+├── src/components/      MapView, Ledger (virtualised), Inspector, Overlays, Sidebar
+└── src/styles.css       Design tokens and components, no CSS framework
 ```
 
 The layers depend in one direction only: `api -> services -> geo`. The `geo`
@@ -441,17 +529,21 @@ The remaining time is mostly the pure-Python Shapefile reader. See Future scope.
 ## Testing
 
 ```bash
-pytest                       # 88 tests
-pytest --cov                 # ~94% branch coverage
+pytest                       # 104 tests
+pytest --cov                 # ~95% branch coverage
 ruff check . && ruff format --check .
 mypy app                     # strict mode
+
+npm --prefix frontend test           # 11 unit tests (units, CSV export, bounds)
+npm --prefix frontend run typecheck  # strict TypeScript
 ```
 
 | Suite | What it covers |
 |---|---|
 | `tests/test_measure.py` | **Accuracy against geodesic ground truth** at the equator, high latitude, the southern hemisphere, the prime meridian, UTM zone edges and >84°N. Holes, multipolygons, 3D input, projected source CRSs (UTM, Web Mercator), non-WGS84 datums, invalid geometry repair, all non-measurable cases. |
 | `tests/test_readers.py` | KML namespaces, folders, ExtendedData/SchemaData, both hole encodings, MultiGeometry collapse, malformed features, XXE, entity expansion, deep nesting, KMZ. Shapefile multi-layer, nested folders, `.cpg`, missing `.prj`/`.dbf`/`.shx`, NULL shapes, ring orientation. Zip bombs, corrupt archives, content sniffing. |
-| `tests/test_api.py` | Every endpoint end to end: status codes, `Location` header, pagination and caps, filters, error shapes, FAILED records, transaction rollback on mid-file failure, cascade delete. |
+| `tests/test_api.py` | Every endpoint end to end: status codes, `Location` header, pagination and caps, filters, error shapes, FAILED records, transaction rollback on mid-file failure, cascade delete. GeoJSON streaming (reprojection from UTM, `null` for unplaceable geometry, truncation), file bbox, CORS, and the UI mount not shadowing API routes or slash redirects. |
+| `frontend/src/*.test.ts` | Unit formatting and auto-scaling, PROJ-string parsing, CSV quoting and the formula-injection guard, geometry bounds. |
 
 The test inputs are built in code (`tests/factories.py`), not stored as binary
 fixtures, so every test shows exactly what it feeds in. `python -m scripts.make_samples`
@@ -486,8 +578,10 @@ regenerates `samples/`.
   `?bbox=` filtering and "features within polygon".
 - **More formats.** GeoJSON, GeoPackage, DXF. A GDAL-backed reader (pyogrio) for
   high-volume ingestion: the reader is now the bottleneck.
-- **Output options.** `?crs=EPSG:4326` reprojection on `/features/`, unit
-  selection (ha, acres, km), GeoJSON `FeatureCollection` and CSV export.
+- **Output options.** Server-side CSV/GeoPackage export and arbitrary `?crs=` output
+  reprojection. WGS84 GeoJSON and client-side CSV already exist.
+- **UI.** Vector tiles from PostGIS for million-feature files, drawing and editing
+  geometry, and comparing two uploads.
 - **3D / terrain.** Surface (slope-aware) area and 3D length using the Z values that
   drone surveys provide, or a DEM.
 - **Antimeridian-crossing features.** Split geometries at ±180° before measuring.
