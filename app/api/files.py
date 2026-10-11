@@ -291,15 +291,22 @@ def list_measurements(
     bbox: BBoxDep,
     status_filter: Annotated[MeasurementStatus | None, Query(alias="status")] = None,
     geometry_type: Annotated[str | None, Query(description="e.g. Polygon")] = None,
+    include_geometry: Annotated[bool, Query(description="Add each feature's GeoJSON geometry")] = False,
 ) -> MeasurementsResponse:
-    queries.get_file(session, file_id, user)
+    record = queries.get_file(session, file_id, user)
     limit, offset = page
     total, rows = queries.list_features(session, file_id, limit, offset, status_filter, geometry_type, bbox)
+    items = [MeasurementOut.model_validate(r) for r in rows]
+    if not include_geometry:
+        for item in items:
+            item.geometry = None
     return MeasurementsResponse(
         file_id=file_id,
+        filename=record.filename,
+        crs=record.crs,
         summary=queries.measurement_summary(session, file_id),
         total=total,
         limit=limit,
         offset=offset,
-        items=[MeasurementOut.model_validate(r) for r in rows],
+        items=items,
     )

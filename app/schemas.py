@@ -60,18 +60,30 @@ class FeatureOut(BaseModel):
 
 
 class MeasurementOut(BaseModel):
+    """One feature: its identity (index, type, source CRS, attributes) and its measurements."""
+
     model_config = ConfigDict(from_attributes=True)
 
-    index: int
-    source_id: str | None
+    index: int = Field(description="0-based position of the feature in the file; its identifier.")
+    source_id: str | None = Field(description="Identifier from the source data (KML Placemark id).")
     layer: str | None
     geometry_type: str | None
+    crs: str | None = Field(description="CRS of the source geometry, e.g. 'EPSG:4326'.")
     status: MeasurementStatus = Field(validation_alias="measurement_status")
-    area_m2: float | None
-    perimeter_m: float | None
-    length_m: float | None
-    measurement_crs: dict[str, str] = Field(description="Projected CRS (PROJ) used for each value.")
+    area_m2: float | None = Field(description="Polygons: area in square metres.")
+    perimeter_m: float | None = Field(description="Polygons: perimeter in metres (including holes).")
+    length_m: float | None = Field(description="Lines: length in metres.")
+    measurement_crs: dict[str, str] = Field(description="Projected CRS (PROJ) each value was computed in.")
     note: str | None = Field(validation_alias="measurement_note")
+    properties: dict[str, Any] = Field(description="Attributes from the source file.")
+    geometry: dict[str, Any] | None = Field(
+        default=None, description="GeoJSON in the source CRS; included with ?include_geometry=true."
+    )
+
+    @field_validator("geometry", mode="before")
+    @classmethod
+    def _parse_geojson(cls, value: object) -> object:
+        return json.loads(value) if isinstance(value, str) else value
 
 
 class MeasurementSummary(BaseModel):
@@ -85,6 +97,8 @@ class MeasurementSummary(BaseModel):
 
 class MeasurementsResponse(BaseModel):
     file_id: str
+    filename: str
+    crs: str | None = Field(description="Source CRS of the file ('MIXED' if layers differ).")
     units: dict[str, str] = {"area": "m2", "perimeter": "m", "length": "m"}
     summary: MeasurementSummary
     total: int = Field(description="Features matching the filters.")
