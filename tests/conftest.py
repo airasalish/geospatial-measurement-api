@@ -41,7 +41,7 @@ def _clean_postgres() -> Iterator[None]:
         engine = create_engine(PG_URL)
         with engine.begin() as conn:
             if conn.execute(text("SELECT to_regclass('public.files')")).scalar():
-                conn.execute(text("TRUNCATE files, rasters RESTART IDENTITY CASCADE"))
+                conn.execute(text("TRUNCATE files, rasters, projects, users RESTART IDENTITY CASCADE"))
         engine.dispose()
 
 
