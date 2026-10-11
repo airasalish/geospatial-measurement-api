@@ -3,6 +3,8 @@
 python -m scripts.make_samples
 """
 
+import math
+import random
 from pathlib import Path
 
 import shapefile
@@ -69,10 +71,74 @@ def parcels_utm_zip() -> bytes:
     )
 
 
+def farm_plots_zip() -> bytes:
+    """A multi-layer survey bundle near Devanahalli (north of Bengaluru), in WGS84.
+
+    plots  - ~430 irregular agricultural parcels on a jittered grid
+    tracks - farm tracks running between the parcel rows
+    wells  - borewell locations
+    """
+    rng = random.Random(7)  # noqa: S311  (deterministic sample data)
+    lon0, lat0 = 77.700, 13.240
+    m_lon = 1 / (111_320 * math.cos(math.radians(lat0)))  # degrees per metre
+    m_lat = 1 / 110_574
+    cols, rows, cell = 24, 18, 70.0  # metres
+
+    def jitter(i: int, j: int) -> tuple[float, float]:
+        # Shared corner jitter so neighbouring plots meet without gaps or overlaps.
+        r = random.Random(i * 1000 + j)  # noqa: S311
+        x = i * cell + (r.uniform(-14, 14) if 0 < i < cols else 0)
+        y = j * cell + (r.uniform(-14, 14) if 0 < j < rows else 0)
+        return lon0 + x * m_lon, lat0 + y * m_lat
+
+    crops = ["Ragi", "Grapes", "Maize", "Tomato", "Fallow", "Mulberry", "Groundnut"]
+    owners = ["Gowda", "Reddy", "Naik", "Shetty", "Rao", "Kumar", "Hegde", "Patil"]
+    plots, records = [], []
+    for i in range(cols):
+        for j in range(rows):
+            if rng.random() < 0.012:  # a few gaps: ponds, homesteads
+                continue
+            a, b, c, d = jitter(i, j), jitter(i + 1, j), jitter(i + 1, j + 1), jitter(i, j + 1)
+            plots.append([[a, d, c, b, a]])  # clockwise
+            records.append({
+                "plot_no": f"DVH-{i:02d}{j:02d}",
+                "owner": f"{rng.choice(owners)} {chr(65 + rng.randrange(26))}.",
+                "crop": rng.choice(crops),
+                "surveyed": f.TODAY,
+            })  # fmt: skip
+
+    tracks, track_recs = [], []
+    for j in (6, 12):
+        tracks.append([[jitter(i, j) for i in range(cols + 1)]])
+        track_recs.append({"name": f"Row track {j // 6}", "surface": "Gravel"})
+    tracks.append([[jitter(12, j) for j in range(rows + 1)]])
+    track_recs.append({"name": "Spine road", "surface": "Tar"})
+
+    wells = [jitter(rng.randrange(cols), rng.randrange(rows)) for _ in range(14)]
+    well_recs = [
+        {"well_id": f"BW-{k + 1:02d}", "depth_m": round(rng.uniform(180, 420), 1)} for k in range(14)
+    ]
+
+    members: dict[str, bytes | str] = {}
+    for stem, kwargs in {
+        "plots": dict(shape_type=shapefile.POLYGON, geometries=plots, records=records,
+                      fields=[("plot_no", "C"), ("owner", "C"), ("crop", "C"), ("surveyed", "D")]),
+        "tracks": dict(shape_type=shapefile.POLYLINE, geometries=tracks, records=track_recs,
+                       fields=[("name", "C"), ("surface", "C")]),
+        "wells": dict(shape_type=shapefile.POINT, geometries=wells, records=well_recs,
+                      fields=[("well_id", "C"), ("depth_m", "N")]),
+    }.items():  # fmt: skip
+        for ext, data in f.shapefile_parts(**kwargs).items():
+            members[f"devanahalli_survey/{stem}{ext}"] = data
+        members[f"devanahalli_survey/{stem}.prj"] = f.prj(4326)
+    return f.zip_bytes(members)
+
+
 def main() -> None:
     OUT.mkdir(exist_ok=True)
     (OUT / "site_survey.kml").write_bytes(survey_kml())
     (OUT / "parcels_utm43n.zip").write_bytes(parcels_utm_zip())
+    (OUT / "farm_plots.zip").write_bytes(farm_plots_zip())
     print(f"wrote samples to {OUT}")
 
 

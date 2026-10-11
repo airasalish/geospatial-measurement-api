@@ -54,7 +54,10 @@ def zip_bytes(members: dict[str, bytes | str]) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, content in members.items():
-            zf.writestr(name, content)
+            # Fixed timestamp: identical input -> byte-identical zip (reproducible samples).
+            info = zipfile.ZipInfo(name, date_time=(2024, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zf.writestr(info, content)
     return buf.getvalue()
 
 
