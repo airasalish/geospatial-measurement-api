@@ -139,10 +139,12 @@ in a `.env` file (see [`.env.example`](.env.example)).
 
 **Traverse** is named after the surveyor's traverse: walk a chain of stations,
 measure every leg, close the loop. The mark is exactly that, a closed five-station
-traverse. The interface is built like a field instrument: graphite surfaces that sit
-well over satellite imagery, a high-visibility survey-lime accent, Space Grotesk
-headings and JetBrains Mono figures so measurements line up in columns. Everything on
-screen comes from the public API; the UI has no private endpoints.
+traverse. The interface uses the visual language of a survey plan: paper and ink
+tones, a survey-flag orange, serif readouts and monospaced figures that line up like a
+field book. Everything on screen comes from the public API; the UI has no private
+endpoints.
+
+![Drawing an area on the map: live estimate while sketching, exact ellipsoidal value from the API on finish](docs/screenshots/draw-measure.jpg)
 
 ![Farm-plot bundle: 442 parcels, tracks and borewells with area labels, plus the sortable ledger](docs/screenshots/farm-plots.jpg)
 
@@ -164,6 +166,14 @@ screen comes from the public API; the UI has no private endpoints.
   all attributes. Copy the geometry as GeoJSON.
 - **Upload.** Drag and drop with real upload progress, then a processing state. Errors
   show the API's code and message, with a link to the recorded FAILED file.
+- **Draw & measure.** No file? Sketch one. Pick **Area** or **Distance**, click
+  points on the map and watch a live on-the-sphere estimate. Double-click or press
+  `Enter` and the sketch goes through the real pipeline as a KML upload, coming back
+  with the exact ellipsoidal value. `⌫` undoes a point, `Esc` cancels.
+- **Linked hover.** Hovering a row in the ledger highlights that feature on the map,
+  and hovering a feature on the map highlights its row.
+- **Drop anywhere.** Drag a file over any part of the window to upload it.
+- **Animated totals.** Readout totals count up when a file opens or the units change.
 - **Shareable state.** `?file=<id>&feature=<n>&basemap=satellite` restores the exact
   view. `Esc` closes the inspector.
 

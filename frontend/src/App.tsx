@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type GeoFile, type MapCollection, type MeasurementSummary } from "./api";
 import { Inspector } from "./components/Inspector";
 import { Ledger } from "./components/Ledger";
-import { type FocusRequest, MapView } from "./components/MapView";
-import { EmptyState, MapControls, Readout } from "./components/Overlays";
+import { type DrawKind, type FocusRequest, type LngLat, MapView } from "./components/MapView";
+import { DrawHud, DropVeil, EmptyState, MapControls, Readout } from "./components/Overlays";
 import { FileList, Logo, SampleList, UploadZone, type UploadState } from "./components/Sidebar";
-import { baseName, downloadText, measurementsCsv } from "./exporters";
+import { baseName, downloadText, measurementsCsv, sketchKml } from "./exporters";
 import type { UnitSystem } from "./units";
 
 /** Ledger height: 300px, but never more than a third of short screens. */
@@ -69,6 +69,10 @@ export default function App() {
   );
   const [showLabels, setShowLabels] = useState(true);
   const [ledgerOpen, setLedgerOpen] = useState(true);
+  const [hovered, setHovered] = useState<number | null>(null);
+  const [draw, setDraw] = useState<DrawKind | null>(null);
+  const [sketch, setSketch] = useState<{ vertices: LngLat[]; cursor: LngLat | null }>({ vertices: [], cursor: null });
+  const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const LEDGER_H = useLedgerHeight();
   const openSeq = useRef(0);
@@ -149,6 +153,9 @@ export default function App() {
     }
   };
 
+  const doUploadRef = useRef(doUpload);
+  doUploadRef.current = doUpload;
+
   const uploadSample = async (name: string) => {
     try {
       const res = await fetch(`/samples/${name}`);
@@ -158,6 +165,56 @@ export default function App() {
       if (e instanceof ApiError) setError(e);
     }
   };
+
+  const startDraw = (kind: DrawKind | null) => {
+    setSketch({ vertices: [], cursor: null });
+    setDraw(kind);
+    if (kind) setSelected(null);
+  };
+
+  /** A finished sketch goes through the real pipeline as a one-feature KML file. */
+  const submitSketch = (vertices: LngLat[], kind: DrawKind) => {
+    setDraw(null);
+    const stamp = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const name = `Sketch ${kind === "polygon" ? "area" : "line"} ${stamp}`;
+    const kml = sketchKml(vertices, kind, name);
+    void doUpload(new Blob([kml], { type: "application/vnd.google-earth.kml+xml" }), `${name.replace(/[ :]/g, "-")}.kml`);
+  };
+
+  // Drop a file anywhere on the window, not just on the upload box.
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth += 1;
+      setDragging(true);
+    };
+    const leave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) setDragging(false);
+    };
+    const over = (e: DragEvent) => hasFiles(e) && e.preventDefault();
+    const drop = (e: DragEvent) => {
+      depth = 0;
+      setDragging(false);
+      if (e.defaultPrevented) return; // already handled by the upload box
+      e.preventDefault();
+      const file = e.dataTransfer?.files[0];
+      if (file) void doUploadRef.current(file, file.name);
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+    };
+  }, []);
 
   const deleteFile = async (id: string) => {
     try {
@@ -192,7 +249,7 @@ export default function App() {
           <Logo />
           <div>
             <h1>
-              traverse<span>.</span>
+              Traverse<em>.</em>
             </h1>
             <p>Survey-grade measurement</p>
           </div>
@@ -257,6 +314,12 @@ export default function App() {
           basemap={basemap}
           showLabels={showLabels}
           units={units}
+          hovered={hovered}
+          onHover={setHovered}
+          draw={draw}
+          onDrawChange={(vertices, cursor) => setSketch({ vertices, cursor })}
+          onDrawFinish={submitSketch}
+          onDrawCancel={() => startDraw(null)}
           padding={{
             top: 110,
             left: 40,
@@ -264,6 +327,17 @@ export default function App() {
             bottom: ledgerSpace + 40,
           }}
         />
+
+        {draw && (
+          <DrawHud
+            kind={draw}
+            vertices={sketch.vertices}
+            cursor={sketch.cursor}
+            units={units}
+            onFinish={() => submitSketch(sketch.vertices, draw)}
+            onCancel={() => startDraw(null)}
+          />
+        )}
 
         {active ? (
           <Readout
@@ -282,7 +356,8 @@ export default function App() {
             truncated={active.truncated}
           />
         ) : (
-          !loadingFile && (
+          !loadingFile &&
+          !draw && (
             <EmptyState onSample={(s) => void uploadSample(s)} onBrowse={() => fileInput.current?.click()} busy={!!upload} />
           )
         )}
@@ -303,7 +378,15 @@ export default function App() {
           </div>
         )}
 
-        <MapControls basemap={basemap} onBasemap={(b) => (setBasemap(b), store("basemap", b))} showLabels={showLabels} onLabels={setShowLabels} />
+        <MapControls
+          basemap={basemap}
+          onBasemap={(b) => (setBasemap(b), store("basemap", b))}
+          showLabels={showLabels}
+          onLabels={setShowLabels}
+          draw={draw}
+          onDraw={startDraw}
+          disabled={!!upload}
+        />
 
         {inspecting && active && selected != null && (
           <Inspector
@@ -321,12 +404,16 @@ export default function App() {
             collection={collection}
             units={units}
             selected={selected}
+            hovered={hovered}
+            onHover={setHovered}
             onPick={(i) => pick(i, true)}
             open={ledgerOpen}
             onToggle={() => setLedgerOpen((o) => !o)}
             height={LEDGER_H}
           />
         )}
+
+        {dragging && <DropVeil />}
 
         {loadingFile && (
           <div className="loading-veil" aria-live="polite">

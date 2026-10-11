@@ -37,15 +37,15 @@ export interface UploadState {
 export function Logo({ size = 36 }: { size?: number }) {
   return (
     <svg className="brand-mark" width={size} height={size} viewBox="0 0 36 36" aria-hidden="true">
-      <rect x="0.5" y="0.5" width="35" height="35" rx="9" fill="#141920" stroke="#323c48" />
-      <path d="M8 24 11.5 10 24 7.5 28.5 19.5 18 28Z" fill="rgba(198,244,50,.12)" stroke="#c6f432" strokeWidth="2" strokeLinejoin="round" />
-      <g fill="#e9edf2">
+      <rect width="36" height="36" rx="8" fill="#1c1f1d" />
+      <path d="M8 24 11.5 10 24 7.5 28.5 19.5 18 28Z" fill="rgba(228,83,42,.16)" stroke="#e4532a" strokeWidth="2" strokeLinejoin="round" />
+      <g fill="#f3eee3">
         <circle cx="11.5" cy="10" r="1.9" />
         <circle cx="24" cy="7.5" r="1.9" />
         <circle cx="28.5" cy="19.5" r="1.9" />
         <circle cx="18" cy="28" r="1.9" />
       </g>
-      <circle cx="8" cy="24" r="3" fill="#c6f432" stroke="#141920" strokeWidth="1.4" />
+      <circle cx="8" cy="24" r="3" fill="#e4532a" stroke="#1c1f1d" strokeWidth="1.4" />
     </svg>
   );
 }

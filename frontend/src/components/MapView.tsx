@@ -7,7 +7,7 @@ import { area, fmt, length, type UnitSystem } from "../units";
 
 // Free, keyless basemaps: OpenFreeMap vector tiles, and Esri World Imagery for the
 // satellite view (drone surveys are easier to judge against imagery).
-const STYLE_URL = "https://tiles.openfreemap.org/styles/dark";
+const STYLE_URL = "https://tiles.openfreemap.org/styles/positron";
 const SATELLITE_TILES = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
 const SOURCE = "features";
@@ -19,12 +19,15 @@ const POINT: ExpressionSpecification = ["match", ["geometry-type"], ["Point", "M
 
 const statusColor = (measured: string): ExpressionSpecification => [
   "match", ["get", "status"],
-  "FAILED", "#ff5d5d",
-  "UNSUPPORTED", "#f2b33d",
-  "NOT_APPLICABLE", "#a8b2bf",
+  "FAILED", "#b4382a",
+  "UNSUPPORTED", "#b98318",
+  "NOT_APPLICABLE", "#1c1f1d",
   measured,
 ];
 const isOn = (key: "hover" | "selected"): ExpressionSpecification => ["boolean", ["feature-state", key], false];
+
+export type DrawKind = "polygon" | "line";
+export type LngLat = [number, number];
 
 export interface FocusRequest {
   index: number;
@@ -42,6 +45,34 @@ interface Props {
   showLabels: boolean;
   units: UnitSystem;
   padding: maplibregl.PaddingOptions;
+  /** Feature hovered anywhere in the app (map or ledger). */
+  hovered: number | null;
+  onHover: (index: number | null) => void;
+  /** Active sketch tool, if any. */
+  draw: DrawKind | null;
+  /** Vertices so far, plus the live cursor position, while drawing. */
+  onDrawChange: (vertices: LngLat[], cursor: LngLat | null) => void;
+  onDrawFinish: (vertices: LngLat[], kind: DrawKind) => void;
+  onDrawCancel: () => void;
+}
+
+const DRAW = "draw";
+const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+
+/** Sketch preview: the shape so far, the rubber-band segment and the vertices. */
+function sketchGeoJSON(kind: DrawKind, vertices: LngLat[], cursor: LngLat | null): GeoJSON.FeatureCollection {
+  const pts = cursor ? [...vertices, cursor] : vertices;
+  const features: GeoJSON.Feature[] = vertices.map((c, i) => ({
+    type: "Feature",
+    properties: { first: i === 0 && kind === "polygon" && vertices.length >= 3 },
+    geometry: { type: "Point", coordinates: c },
+  }));
+  if (kind === "polygon" && pts.length >= 3) {
+    features.push({ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [[...pts, pts[0]!]] } });
+  } else if (pts.length >= 2) {
+    features.push({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: pts } });
+  }
+  return { type: "FeatureCollection", features };
 }
 
 interface Hover {
@@ -51,7 +82,8 @@ interface Hover {
 }
 
 export function MapView(props: Props) {
-  const { collection, bbox, fileKey, selected, focus, onSelect, basemap, showLabels, units, padding } = props;
+  const { collection, bbox, fileKey, selected, focus, onSelect, basemap, showLabels, units, padding, hovered, draw } =
+    props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [ready, setReady] = useState(false);
@@ -60,6 +92,13 @@ export function MapView(props: Props) {
   const selectedId = useRef<number | null>(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const cb = useRef(props);
+  cb.current = props; // latest callbacks for map event handlers registered once
+  const sketch = useRef<{ kind: DrawKind | null; vertices: LngLat[]; cursor: LngLat | null }>({
+    kind: null,
+    vertices: [],
+    cursor: null,
+  });
   const paddingRef = useRef(padding);
   paddingRef.current = padding;
 
@@ -70,6 +109,29 @@ export function MapView(props: Props) {
     if (selectedId.current != null) map.setFeatureState({ source: SOURCE, id: selectedId.current }, { selected: false });
     if (id != null) map.setFeatureState({ source: SOURCE, id }, { selected: true });
     selectedId.current = id;
+  };
+
+  /** Move the "hover" feature-state to `id` (driven by the map or the ledger). */
+  const applyHover = (id: number | null) => {
+    const map = mapRef.current;
+    if (!map?.getSource(SOURCE) || id === hoveredId.current) return;
+    if (hoveredId.current != null) map.setFeatureState({ source: SOURCE, id: hoveredId.current }, { hover: false });
+    if (id != null) map.setFeatureState({ source: SOURCE, id }, { hover: true });
+    hoveredId.current = id;
+  };
+
+  const renderSketch = () => {
+    const map = mapRef.current;
+    const { kind, vertices, cursor } = sketch.current;
+    (map?.getSource(DRAW) as GeoJSONSource | undefined)?.setData(kind ? sketchGeoJSON(kind, vertices, cursor) : EMPTY);
+  };
+
+  const finishSketch = () => {
+    const { kind, vertices } = sketch.current;
+    // A double-click also fires two clicks; drop the duplicate vertices they add.
+    const clean = vertices.filter((v, i) => i === 0 || v[0] !== vertices[i - 1]![0] || v[1] !== vertices[i - 1]![1]);
+    if (!kind || clean.length < (kind === "polygon" ? 3 : 2)) return;
+    cb.current.onDrawFinish(clean, kind);
   };
 
   // ---- one-time map setup
@@ -110,8 +172,8 @@ export function MapView(props: Props) {
         source: SOURCE,
         filter: POLYGON,
         paint: {
-          "fill-color": statusColor("#c6f432"),
-          "fill-opacity": ["case", isOn("selected"), 0.38, isOn("hover"), 0.26, 0.13],
+          "fill-color": statusColor("#e4532a"),
+          "fill-opacity": ["case", isOn("selected"), 0.42, isOn("hover"), 0.32, 0.18],
         },
       });
       map.addLayer({
@@ -120,7 +182,7 @@ export function MapView(props: Props) {
         source: SOURCE,
         filter: POLYGON,
         paint: {
-          "line-color": ["case", isOn("selected"), "#ffffff", statusColor("#c6f432")],
+          "line-color": ["case", isOn("selected"), "#1c1f1d", statusColor("#c4441f")],
           "line-width": ["case", isOn("selected"), 2.6, isOn("hover"), 2.2, 1.4],
         },
       });
@@ -130,7 +192,7 @@ export function MapView(props: Props) {
         source: SOURCE,
         filter: LINE,
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#0c0f13", "line-width": ["case", isOn("selected"), 7, 5], "line-opacity": 0.85 },
+        paint: { "line-color": "#faf7f0", "line-width": ["case", isOn("selected"), 7, 5], "line-opacity": 0.9 },
       });
       map.addLayer({
         id: "line",
@@ -139,7 +201,7 @@ export function MapView(props: Props) {
         filter: LINE,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
-          "line-color": ["case", isOn("selected"), "#ffffff", statusColor("#3cc4ee")],
+          "line-color": ["case", isOn("selected"), "#1c1f1d", statusColor("#2b6d8e")],
           "line-width": ["case", isOn("selected"), 4, isOn("hover"), 3.6, 2.6],
         },
       });
@@ -150,14 +212,14 @@ export function MapView(props: Props) {
         filter: POINT,
         paint: {
           "circle-radius": ["case", isOn("selected"), 7.5, isOn("hover"), 6.5, 5],
-          "circle-color": ["case", isOn("selected"), "#c6f432", statusColor("#e9edf2")],
-          "circle-stroke-color": "#0c0f13",
+          "circle-color": ["case", isOn("selected"), "#e4532a", statusColor("#1c1f1d")],
+          "circle-stroke-color": "#faf7f0",
           "circle-stroke-width": 2,
         },
       });
       const labelPaint = {
-        "text-color": "#e9edf2",
-        "text-halo-color": "rgba(12,15,19,0.92)",
+        "text-color": "#1c1f1d",
+        "text-halo-color": "rgba(250,247,240,0.95)",
         "text-halo-width": 1.6,
       };
       map.addLayer({
@@ -190,29 +252,75 @@ export function MapView(props: Props) {
         paint: labelPaint,
       });
 
-      const setState = (id: number | null, key: "hover" | "selected", value: boolean) => {
-        if (id != null) map.setFeatureState({ source: SOURCE, id }, { [key]: value });
-      };
+      // Sketch layers sit on top of everything.
+      map.addSource(DRAW, { type: "geojson", data: EMPTY });
+      map.addLayer({
+        id: "draw-fill",
+        type: "fill",
+        source: DRAW,
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: { "fill-color": "#2b6d8e", "fill-opacity": 0.18 },
+      });
+      map.addLayer({
+        id: "draw-line",
+        type: "line",
+        source: DRAW,
+        filter: ["!=", ["geometry-type"], "Point"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#1c1f1d", "line-width": 2.2, "line-dasharray": [2, 1.5] },
+      });
+      map.addLayer({
+        id: "draw-vertex",
+        type: "circle",
+        source: DRAW,
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: {
+          "circle-radius": ["case", ["boolean", ["get", "first"], false], 7, 4.5],
+          "circle-color": ["case", ["boolean", ["get", "first"], false], "#e4532a", "#faf7f0"],
+          "circle-stroke-color": "#1c1f1d",
+          "circle-stroke-width": 2,
+        },
+      });
 
       map.on("mousemove", (e) => {
+        if (sketch.current.kind) {
+          sketch.current.cursor = [e.lngLat.lng, e.lngLat.lat];
+          renderSketch();
+          cb.current.onDrawChange(sketch.current.vertices, sketch.current.cursor);
+          setHover(null);
+          return;
+        }
         const f: MapGeoJSONFeature | undefined = map.queryRenderedFeatures(e.point, { layers: INTERACTIVE })[0];
         const id = f ? Number(f.id) : null;
-        if (id !== hoveredId.current) {
-          setState(hoveredId.current, "hover", false);
-          setState(id, "hover", true);
-          hoveredId.current = id;
-        }
+        if (id !== hoveredId.current) cb.current.onHover(id);
         map.getCanvas().style.cursor = f ? "pointer" : "";
         setHover(f ? { props: f.properties as MapFeatureProps, x: e.point.x, y: e.point.y } : null);
       });
       map.on("mouseout", () => {
-        setState(hoveredId.current, "hover", false);
-        hoveredId.current = null;
+        if (!sketch.current.kind) cb.current.onHover(null);
         setHover(null);
       });
       map.on("click", (e) => {
+        const s = sketch.current;
+        if (s.kind) {
+          // Clicking the first vertex closes a polygon.
+          const first = s.vertices[0];
+          if (s.kind === "polygon" && first && s.vertices.length >= 3) {
+            const pt = map.project(first);
+            if (Math.hypot(pt.x - e.point.x, pt.y - e.point.y) < 12) return finishSketch();
+          }
+          s.vertices = [...s.vertices, [e.lngLat.lng, e.lngLat.lat]];
+          renderSketch();
+          cb.current.onDrawChange(s.vertices, s.cursor);
+          return;
+        }
         const f = map.queryRenderedFeatures(e.point, { layers: INTERACTIVE })[0];
         onSelectRef.current(f ? Number(f.id) : null);
+      });
+      map.on("dblclick", (e) => {
+        if (!sketch.current.kind) return;
+        e.preventDefault();
+        finishSketch();
       });
 
       setReady(true);
@@ -223,6 +331,40 @@ export function MapView(props: Props) {
       mapRef.current = null;
     };
   }, []);
+
+  // ---- hover linking with the ledger
+  useEffect(() => {
+    if (ready) applyHover(hovered);
+  }, [hovered, ready]);
+
+  // ---- sketch tool lifecycle + keyboard (Enter finish, Backspace undo, Esc cancel)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    sketch.current = { kind: draw, vertices: [], cursor: null };
+    renderSketch();
+    if (!draw) {
+      map.doubleClickZoom.enable();
+      map.getCanvas().style.cursor = "";
+      return;
+    }
+    map.doubleClickZoom.disable();
+    map.getCanvas().style.cursor = "crosshair";
+    applyHover(null);
+    const onKey = (e: KeyboardEvent) => {
+      const s = sketch.current;
+      if (e.key === "Enter") finishSketch();
+      else if (e.key === "Escape") cb.current.onDrawCancel();
+      else if (e.key === "Backspace" && document.activeElement?.tagName !== "INPUT") {
+        e.preventDefault();
+        s.vertices = s.vertices.slice(0, -1);
+        renderSketch();
+        cb.current.onDrawChange(s.vertices, s.cursor);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [draw, ready]);
 
   // ---- data (+ unit-aware labels)
   // Features without a placeable geometry stay in the ledger but can't go on the map.
@@ -248,9 +390,11 @@ export function MapView(props: Props) {
     if (!ready || !map) return;
     const source = map.getSource(SOURCE) as GeoJSONSource | undefined;
     source?.setData(labelled ?? { type: "FeatureCollection", features: [] });
-    // New data can mean new ids (another file): re-apply the selection.
+    // New data can mean new ids (another file): re-apply selection and hover.
     selectedId.current = null;
+    hoveredId.current = null;
     applySelected(selected);
+    applyHover(hovered);
   }, [labelled, ready]);
 
   // ---- fit to the file when it changes

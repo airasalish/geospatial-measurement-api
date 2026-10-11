@@ -25,13 +25,15 @@ interface Props {
   collection: MapCollection;
   units: UnitSystem;
   selected: number | null;
+  hovered: number | null;
+  onHover: (index: number | null) => void;
   onPick: (index: number) => void;
   open: boolean;
   onToggle: () => void;
   height: number;
 }
 
-export function Ledger({ collection, units, selected, onPick, open, onToggle, height }: Props) {
+export function Ledger({ collection, units, selected, hovered, onHover, onPick, open, onToggle, height }: Props) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<MeasurementStatus | "ALL">("ALL");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "index", dir: 1 });
@@ -166,7 +168,9 @@ export function Ledger({ collection, units, selected, onPick, open, onToggle, he
                 key={p.index}
                 role="row"
                 tabIndex={0}
-                className={`lrow${p.index === selected ? " is-selected" : ""}`}
+                className={`lrow${p.index === selected ? " is-selected" : ""}${p.index === hovered ? " is-hovered" : ""}`}
+                onMouseEnter={() => onHover(p.index)}
+                onMouseLeave={() => onHover(null)}
                 style={{ position: "absolute", top: (start + i) * ROW_H, left: 0, right: 0 }}
                 onClick={() => onPick(p.index)}
                 onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onPick(p.index))}

@@ -32,3 +32,18 @@ export function downloadText(content: string, filename: string, type: string): v
 export function baseName(filename: string): string {
   return filename.replace(/\.(zip|kml|kmz)$/i, "");
 }
+
+/** A one-feature KML document for a sketch drawn on the map. */
+export function sketchKml(coords: [number, number][], kind: "polygon" | "line", name: string): string {
+  const pts = kind === "polygon" ? [...coords, coords[0]!] : coords;
+  const text = pts.map(([lon, lat]) => `${lon.toFixed(8)},${lat.toFixed(8)}`).join(" ");
+  const geometry =
+    kind === "polygon"
+      ? `<Polygon><outerBoundaryIs><LinearRing><coordinates>${text}</coordinates></LinearRing></outerBoundaryIs></Polygon>`
+      : `<LineString><coordinates>${text}</coordinates></LineString>`;
+  const safe = name.replace(/[<&>]/g, "");
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>` +
+    `<Placemark><name>${safe}</name>${geometry}</Placemark></Document></kml>\n`
+  );
+}

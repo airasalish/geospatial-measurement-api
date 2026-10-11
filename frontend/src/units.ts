@@ -46,15 +46,25 @@ export interface Quantity {
   unit: string;
 }
 
-export function area(m2: number | null | undefined, system: UnitSystem, unit?: AreaUnit): Quantity | null {
+export function area(
+  m2: number | null | undefined,
+  system: UnitSystem,
+  unit?: AreaUnit,
+  unitFrom: number | null = m2 ?? null,
+): Quantity | null {
   if (m2 == null) return null;
-  const u = unit ?? autoArea(m2, system);
+  const u = unit ?? autoArea(unitFrom ?? m2, system);
   return { value: formatNumber(m2 * AREA_UNITS[u].perM2), unit: AREA_UNITS[u].label };
 }
 
-export function length(m: number | null | undefined, system: UnitSystem, unit?: LengthUnit): Quantity | null {
+export function length(
+  m: number | null | undefined,
+  system: UnitSystem,
+  unit?: LengthUnit,
+  unitFrom: number | null = m ?? null,
+): Quantity | null {
   if (m == null) return null;
-  const u = unit ?? autoLength(m, system);
+  const u = unit ?? autoLength(unitFrom ?? m, system);
   return { value: formatNumber(m * LENGTH_UNITS[u].perM), unit: LENGTH_UNITS[u].label };
 }
 

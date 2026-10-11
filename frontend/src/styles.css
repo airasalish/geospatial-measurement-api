@@ -1,37 +1,35 @@
-/* Traverse: a field-instrument interface. Graphite surfaces, a high-visibility
-   survey-lime accent and monospaced figures, built to read clearly over map and
-   satellite imagery. */
+/* Traverse: a survey-plan aesthetic. Paper, ink and survey-flag orange,
+   with monospaced numerals so measurements line up like a surveyor's field book. */
 
 :root {
-  --bg: #0c0f13;
-  --surface: #141920;
-  --surface-2: #1b222b;
-  --text: #e9edf2;
-  --text-2: #a8b2bf;
-  --text-3: #6c7684;
-  --line: #232b35;
-  --line-strong: #323c48;
+  --paper: #f3eee3;
+  --paper-2: #faf7f0;
+  --paper-3: #ebe4d5;
+  --ink: #1c1f1d;
+  --ink-2: #474c47;
+  --ink-3: #848780;
+  --rule: #ddd4c2;
+  --rule-strong: #c4b9a2;
 
-  --accent: #c6f432; /* survey lime: the colour of hi-vis field gear */
-  --accent-ink: #d4ff4d;
-  --accent-soft: rgba(198, 244, 50, 0.1);
-  --on-accent: #0c0f13;
-  --cyan: #3cc4ee;
-  --ok: #3ddc97;
-  --warn: #f2b33d;
-  --err: #ff5d5d;
-  --muted: #6c7684;
+  --flag: #e4532a; /* survey flag */
+  --flag-ink: #b93f1d;
+  --flag-soft: rgba(228, 83, 42, 0.12);
+  --water: #2b6d8e;
+  --grass: #3d7a4c;
+  --ochre: #b98318;
+  --brick: #b4382a;
+  --slate: #6d726c;
 
-  --display: "Space Grotesk", system-ui, sans-serif;
-  --sans: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
 
-  --radius: 8px;
-  --shadow: 0 0 0 1px rgba(0, 0, 0, 0.2), 0 12px 32px -12px rgba(0, 0, 0, 0.7);
+  --radius: 6px;
+  --shadow: 0 1px 0 rgba(28, 31, 29, 0.04), 0 8px 24px -12px rgba(28, 31, 29, 0.28);
   --sidebar-w: 352px;
   --inspector-w: 372px;
 
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 *,
@@ -48,11 +46,11 @@ body,
 }
 
 body {
-  background: var(--bg);
-  color: var(--text);
+  background: var(--paper);
+  color: var(--ink);
   font: 14px/1.45 var(--sans);
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: "tnum";
+  font-feature-settings: "ss01", "tnum";
 }
 
 button,
@@ -67,7 +65,7 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--flag);
   outline-offset: 2px;
 }
 
@@ -98,7 +96,7 @@ button {
   position: relative;
   min-width: 0;
   overflow: hidden;
-  background: var(--surface-2);
+  background: var(--paper-3);
 }
 
 .map {
@@ -112,10 +110,10 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--bg);
-  border-right: 1px solid var(--line-strong);
+  background: var(--paper);
+  border-right: 1px solid var(--rule-strong);
   /* faint contour lines, the survey-plan signature */
-  background-image: radial-gradient(circle at 120% -10%, transparent 0 58%, rgba(198, 244, 50, 0.05) 58.2% 58.6%, transparent 58.8% 64%, rgba(198, 244, 50, 0.04) 64.2% 64.6%, transparent 64.8% 70%, rgba(198, 244, 50, 0.03) 70.2% 70.6%, transparent 70.8%);
+  background-image: radial-gradient(circle at 120% -10%, transparent 0 58%, rgba(156, 107, 60, 0.07) 58.2% 58.6%, transparent 58.8% 64%, rgba(156, 107, 60, 0.06) 64.2% 64.6%, transparent 64.8% 70%, rgba(156, 107, 60, 0.05) 70.2% 70.6%, transparent 70.8%);
 }
 
 .brand {
@@ -123,7 +121,7 @@ button {
   align-items: center;
   gap: 12px;
   padding: 20px 22px 16px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--rule);
 }
 
 .brand-mark {
@@ -132,13 +130,12 @@ button {
 
 .brand h1 {
   margin: 0;
-  font: 700 22px/1 var(--display);
-  letter-spacing: -0.03em;
+  font: 400 30px/1 var(--serif);
   letter-spacing: -0.01em;
 }
 
-.brand h1 span {
-  color: var(--accent);
+.brand h1 em {
+  color: var(--flag);
 }
 
 .brand p {
@@ -146,7 +143,7 @@ button {
   font: 500 10.5px/1.2 var(--mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .section {
@@ -154,7 +151,7 @@ button {
 }
 
 .section + .section {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--rule);
 }
 
 .section-label {
@@ -165,11 +162,11 @@ button {
   font: 500 10.5px/1 var(--mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .section-label b {
-  color: var(--accent-ink);
+  color: var(--flag-ink);
   font-weight: 600;
   margin-right: 6px;
 }
@@ -184,23 +181,23 @@ button {
 
 .sidebar-foot {
   padding: 12px 22px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--rule);
   display: flex;
   justify-content: space-between;
   gap: 12px;
   font: 11px/1.3 var(--mono);
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .sidebar-foot a {
-  color: var(--text-2);
+  color: var(--ink-2);
   text-decoration: none;
-  border-bottom: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--rule-strong);
 }
 
 .sidebar-foot a:hover {
-  color: var(--accent-ink);
-  border-color: var(--accent);
+  color: var(--flag-ink);
+  border-color: var(--flag);
 }
 
 /* -------------------------------------------------------------- upload zone */
@@ -213,8 +210,8 @@ button {
   width: 100%;
   padding: 20px 16px;
   text-align: center;
-  background: var(--surface);
-  border: 1px dashed var(--line-strong);
+  background: var(--paper-2);
+  border: 1px dashed var(--rule-strong);
   border-radius: var(--radius);
   transition: border-color 0.15s, background 0.15s;
 }
@@ -226,7 +223,7 @@ button {
   position: absolute;
   width: 12px;
   height: 12px;
-  border: 0 solid var(--text);
+  border: 0 solid var(--ink);
   pointer-events: none;
 }
 
@@ -248,12 +245,12 @@ button {
 
 .dropzone:hover,
 .dropzone.is-over {
-  border-color: var(--accent);
-  background: var(--surface-2);
+  border-color: var(--flag);
+  background: #fffaf3;
 }
 
 .dropzone.is-over {
-  background: var(--accent-soft);
+  background: var(--flag-soft);
 }
 
 .dropzone-title {
@@ -262,12 +259,12 @@ button {
 
 .dropzone-hint {
   font: 11px/1.4 var(--mono);
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .dropzone-hint kbd {
   font: inherit;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .upload-progress {
@@ -293,7 +290,7 @@ button {
 
 .bar {
   height: 4px;
-  background: var(--line);
+  background: var(--rule);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -301,7 +298,7 @@ button {
 .bar > span {
   display: block;
   height: 100%;
-  background: var(--accent);
+  background: var(--flag);
   transition: width 0.2s;
 }
 
@@ -323,9 +320,9 @@ button {
   margin-top: 10px;
   padding: 10px 12px;
   border-radius: var(--radius);
-  border: 1px solid rgba(255, 93, 93, 0.35);
-  background: rgba(255, 93, 93, 0.08);
-  color: #ffb4b4;
+  border: 1px solid rgba(180, 56, 42, 0.35);
+  background: rgba(180, 56, 42, 0.07);
+  color: #7d2117;
   font-size: 13px;
 }
 
@@ -360,9 +357,9 @@ button {
   gap: 1px 10px;
   align-items: center;
   padding: 7px 8px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--rule);
   border-radius: var(--radius);
-  background: var(--surface);
+  background: var(--paper-2);
 }
 
 .sample .fmt {
@@ -371,11 +368,11 @@ button {
   place-items: center;
   width: 34px;
   height: 34px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius);
   font: 600 9.5px/1 var(--mono);
   letter-spacing: 0.06em;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .sample .sname {
@@ -390,7 +387,7 @@ button {
   grid-column: 2;
   overflow: hidden;
   font: 10.5px/1.3 var(--mono);
-  color: var(--text-3);
+  color: var(--ink-3);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -406,11 +403,11 @@ button {
 .empty-hint {
   margin: 14px 0 0 !important;
   font-size: 13px !important;
-  color: var(--text-3) !important;
+  color: var(--ink-3) !important;
 }
 
 .empty-hint a {
-  color: var(--accent-ink);
+  color: var(--flag-ink);
   font-weight: 500;
 }
 
@@ -423,20 +420,20 @@ button {
   gap: 6px;
   height: 30px;
   padding: 0 12px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius);
-  background: var(--surface);
+  background: var(--paper-2);
   font-size: 12.5px;
   font-weight: 500;
-  color: var(--text);
+  color: var(--ink);
   text-decoration: none;
   white-space: nowrap;
   transition: background 0.12s, border-color 0.12s;
 }
 
 .btn:hover {
-  border-color: var(--text-3);
-  background: var(--surface-2);
+  border-color: var(--ink-2);
+  background: #fff;
 }
 
 .btn:disabled {
@@ -445,25 +442,25 @@ button {
 }
 
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-  font-weight: 600;
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper-2);
 }
 
 .btn-primary:hover {
-  background: var(--accent-ink);
-  border-color: var(--accent-ink);
+  background: #000;
+  border-color: #000;
 }
 
 .btn-flag {
-  background: var(--err);
-  border-color: var(--err);
+  background: var(--flag);
+  border-color: var(--flag);
   color: #fff;
 }
 
 .btn-flag:hover {
-  filter: brightness(1.1);
+  background: var(--flag-ink);
+  border-color: var(--flag-ink);
 }
 
 .btn-ghost {
@@ -486,20 +483,20 @@ button {
   border: 1px solid transparent;
   border-radius: var(--radius);
   background: transparent;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .icon-btn:hover {
-  background: var(--surface-2);
-  color: var(--text);
+  background: var(--paper-3);
+  color: var(--ink);
 }
 
 .segmented {
   display: inline-flex;
   padding: 2px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius);
-  background: var(--surface);
+  background: var(--paper-2);
 }
 
 .segmented button {
@@ -509,12 +506,12 @@ button {
   border-radius: 4px;
   background: transparent;
   font: 500 11.5px/1 var(--mono);
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .segmented button[aria-pressed="true"] {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--ink);
+  color: var(--paper-2);
 }
 
 /* ---------------------------------------------------------------- file list */
@@ -543,12 +540,12 @@ button {
 }
 
 .file-item:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.5);
 }
 
 .file-item.is-active {
-  background: var(--surface);
-  border-left-color: var(--accent);
+  background: var(--paper-2);
+  border-left-color: var(--flag);
 }
 
 .file-item .fmt {
@@ -557,12 +554,12 @@ button {
   place-items: center;
   width: 38px;
   height: 38px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius);
-  background: var(--surface);
+  background: var(--paper-2);
   font: 600 9.5px/1 var(--mono);
   letter-spacing: 0.06em;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .file-item .fname {
@@ -575,7 +572,7 @@ button {
 .file-item .fmeta {
   grid-column: 2;
   font: 11px/1.3 var(--mono);
-  color: var(--text-3);
+  color: var(--ink-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -603,7 +600,7 @@ button {
 
 .empty-note {
   padding: 18px 0;
-  color: var(--text-3);
+  color: var(--ink-3);
   font-size: 13px;
 }
 
@@ -614,29 +611,29 @@ button {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--slate);
   vertical-align: 1px;
 }
 
 .dot.MEASURED,
 .dot.COMPLETED {
-  background: var(--ok);
+  background: var(--grass);
 }
 
 .dot.NOT_APPLICABLE {
-  background: var(--text-3);
+  background: var(--ink-3);
 }
 
 .dot.UNSUPPORTED {
-  background: var(--warn);
+  background: var(--ochre);
 }
 
 .dot.FAILED {
-  background: var(--err);
+  background: var(--brick);
 }
 
 .dot.PROCESSING {
-  background: var(--cyan);
+  background: var(--water);
 }
 
 .pill {
@@ -645,9 +642,9 @@ button {
   gap: 6px;
   height: 22px;
   padding: 0 8px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--rule-strong);
   border-radius: 11px;
-  background: var(--surface);
+  background: var(--paper-2);
   font: 500 10.5px/1 var(--mono);
   letter-spacing: 0.05em;
   white-space: nowrap;
@@ -658,8 +655,8 @@ button {
 .overlay {
   position: absolute;
   z-index: 2;
-  background: rgba(20, 25, 32, 0.92);
-  border: 1px solid var(--line-strong);
+  background: rgba(250, 247, 240, 0.96);
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   backdrop-filter: blur(6px);
@@ -688,12 +685,12 @@ button {
   min-width: 0;
   max-width: 260px;
   padding: 10px 16px;
-  border-right: 1px solid var(--line);
+  border-right: 1px solid var(--rule);
 }
 
 .readout-file .fname {
   overflow: hidden;
-  font: 600 16px/1.2 var(--display);
+  font: 400 21px/1.1 var(--serif);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -701,7 +698,7 @@ button {
 .readout-file .fmeta {
   margin-top: 4px;
   font: 11px/1.3 var(--mono);
-  color: var(--text-3);
+  color: var(--ink-3);
   white-space: nowrap;
 }
 
@@ -718,7 +715,7 @@ button {
   flex-direction: column;
   justify-content: center;
   padding: 8px 18px;
-  border-right: 1px solid var(--line);
+  border-right: 1px solid var(--rule);
   white-space: nowrap;
 }
 
@@ -726,20 +723,19 @@ button {
   font: 500 9.5px/1 var(--mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .cell-value {
   margin-top: 5px;
-  font: 500 22px/1 var(--mono);
-  letter-spacing: -0.02em;
+  font: 400 26px/1 var(--serif);
   letter-spacing: -0.01em;
 }
 
 .cell-value small {
   margin-left: 4px;
   font: 500 12px/1 var(--mono);
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .cell-status {
@@ -753,7 +749,7 @@ button {
   margin-top: 8px;
   overflow: hidden;
   border-radius: 3px;
-  background: var(--line);
+  background: var(--rule);
 }
 
 .status-bar span {
@@ -766,7 +762,7 @@ button {
   gap: 4px 12px;
   margin-top: 7px;
   font: 10.5px/1 var(--mono);
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .readout-tools {
@@ -794,9 +790,8 @@ button {
   max-width: 520px;
   padding: 8px 12px;
   font-size: 12.5px;
-  border-color: rgba(242, 179, 61, 0.45);
-  background: rgba(38, 31, 17, 0.95);
-  color: #f7d58c;
+  border-color: rgba(185, 131, 24, 0.5);
+  background: rgba(255, 248, 229, 0.97);
 }
 
 /* Map controls: basemap + labels, bottom-left. */
@@ -819,7 +814,7 @@ button {
   gap: 12px;
   padding: 0 6px;
   font: 11px/1 var(--mono);
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .legend i {
@@ -836,13 +831,13 @@ button {
   align-items: center;
   gap: 6px;
   font: 500 11.5px/1 var(--mono);
-  color: var(--text-2);
+  color: var(--ink-2);
   cursor: pointer;
   padding: 0 4px;
 }
 
 .toggle input {
-  accent-color: var(--accent);
+  accent-color: var(--flag);
 }
 
 /* Map hover tooltip. */
@@ -852,9 +847,8 @@ button {
   pointer-events: none;
   padding: 7px 10px;
   border-radius: 4px;
-  background: #07090c;
-  border: 1px solid var(--line-strong);
-  color: var(--text);
+  background: var(--ink);
+  color: var(--paper-2);
   font-size: 12px;
   box-shadow: var(--shadow);
   transform: translate(12px, 12px);
@@ -868,7 +862,7 @@ button {
 .tooltip .t-val {
   margin-top: 2px;
   font: 12px/1.3 var(--mono);
-  color: var(--accent);
+  color: #f6c3ad;
 }
 
 /* ------------------------------------------------------------- empty state */
@@ -885,24 +879,22 @@ button {
   font: 500 10.5px/1 var(--mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--accent-ink);
+  color: var(--flag-ink);
 }
 
 .empty h2 {
   margin: 10px 0 10px;
-  font: 700 38px/1.05 var(--display);
-  letter-spacing: -0.035em;
+  font: 400 44px/1.02 var(--serif);
   letter-spacing: -0.015em;
 }
 
 .empty h2 em {
-  font-style: normal;
-  color: var(--accent);
+  color: var(--flag);
 }
 
 .empty p {
   margin: 0 0 18px;
-  color: var(--text-2);
+  color: var(--ink-2);
   font-size: 14.5px;
 }
 
@@ -916,7 +908,7 @@ button {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   margin-top: 22px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--rule);
 }
 
 .spec div {
@@ -925,19 +917,19 @@ button {
 
 .spec div + div {
   padding-left: 12px;
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--rule);
 }
 
 .spec b {
   display: block;
-  font: 600 19px/1 var(--mono);
+  font: 400 22px/1 var(--serif);
 }
 
 .spec span {
   display: block;
   margin-top: 4px;
   font: 10.5px/1.35 var(--mono);
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .loading-veil {
@@ -946,7 +938,7 @@ button {
   z-index: 1;
   display: grid;
   place-items: center;
-  background: rgba(12, 15, 19, 0.35);
+  background: rgba(243, 238, 227, 0.4);
   pointer-events: none;
 }
 
@@ -977,7 +969,7 @@ button {
   align-items: flex-start;
   gap: 10px;
   padding: 16px 16px 14px 18px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--rule);
 }
 
 .inspector-head .titles {
@@ -989,14 +981,13 @@ button {
   font: 500 10.5px/1 var(--mono);
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .inspector-head h3 {
   margin: 6px 0 8px;
   overflow-wrap: anywhere;
-  font: 600 21px/1.15 var(--display);
-  letter-spacing: -0.02em;
+  font: 400 26px/1.05 var(--serif);
 }
 
 .inspector-body {
@@ -1010,55 +1001,54 @@ button {
   font: 500 10.5px/1 var(--mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .big-measures {
   display: grid;
   gap: 1px;
   margin-top: 14px;
-  background: var(--line);
-  border: 1px solid var(--line);
+  background: var(--rule);
+  border: 1px solid var(--rule);
   border-radius: var(--radius);
   overflow: hidden;
 }
 
 .big-measure {
   padding: 12px 14px;
-  background: var(--surface);
+  background: var(--paper-2);
 }
 
 .big-measure .label {
   font: 500 9.5px/1 var(--mono);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .big-measure .value {
   margin-top: 6px;
-  font: 500 28px/1 var(--mono);
-  letter-spacing: -0.03em;
+  font: 400 34px/1 var(--serif);
 }
 
 .big-measure .value small {
   margin-left: 6px;
   font: 500 13px/1 var(--mono);
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .big-measure .exact {
   margin-top: 6px;
   font: 11px/1.3 var(--mono);
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .method {
   padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--flag);
   border-radius: var(--radius);
-  background: var(--surface);
+  background: var(--paper-2);
   font-size: 13px;
 }
 
@@ -1076,7 +1066,7 @@ button {
   padding: 7px 8px;
   overflow-x: auto;
   border-radius: 4px;
-  background: var(--surface-2);
+  background: var(--paper-3);
   font: 11px/1.4 var(--mono);
   white-space: nowrap;
 }
@@ -1085,9 +1075,8 @@ button {
   margin-top: 10px;
   padding: 9px 12px;
   border-radius: var(--radius);
-  background: rgba(242, 179, 61, 0.08);
-  border: 1px solid rgba(242, 179, 61, 0.3);
-  color: #f7d58c;
+  background: rgba(185, 131, 24, 0.1);
+  border: 1px solid rgba(185, 131, 24, 0.3);
   font-size: 12.5px;
 }
 
@@ -1100,7 +1089,7 @@ button {
 .kv th,
 .kv td {
   padding: 6px 0;
-  border-bottom: 1px dotted var(--line-strong);
+  border-bottom: 1px dotted var(--rule-strong);
   text-align: left;
   vertical-align: top;
 }
@@ -1109,7 +1098,7 @@ button {
   width: 40%;
   padding-right: 12px;
   font: 500 11.5px/1.4 var(--mono);
-  color: var(--text-2);
+  color: var(--ink-2);
   overflow-wrap: anywhere;
 }
 
@@ -1118,7 +1107,7 @@ button {
 }
 
 .kv td.null {
-  color: var(--text-3);
+  color: var(--ink-3);
   font-style: italic;
 }
 
@@ -1126,7 +1115,7 @@ button {
   display: flex;
   gap: 6px;
   padding: 10px 18px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--rule);
 }
 
 /* ------------------------------------------------------------------ ledger */
@@ -1145,16 +1134,16 @@ button {
   align-items: center;
   gap: 10px;
   padding: 8px 10px 8px 14px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--rule);
 }
 
 .ledger-head .title {
-  font: 600 15px/1 var(--display);
+  font: 400 19px/1 var(--serif);
 }
 
 .ledger-head .count {
   font: 11px/1 var(--mono);
-  color: var(--text-3);
+  color: var(--ink-3);
 }
 
 .ledger-head .spacer {
@@ -1165,9 +1154,9 @@ button {
   width: 200px;
   height: 28px;
   padding: 0 10px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius);
-  background: var(--bg);
+  background: #fff;
   font-size: 12.5px;
 }
 
@@ -1177,17 +1166,17 @@ button {
   gap: 5px;
   height: 26px;
   padding: 0 9px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--rule-strong);
   border-radius: 13px;
   background: transparent;
   font: 500 11px/1 var(--mono);
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .chip[aria-pressed="true"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper-2);
 }
 
 .table-scroll {
@@ -1206,7 +1195,7 @@ button {
   align-items: center;
   height: 32px;
   padding: 0 14px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--rule);
   font-size: 12.5px;
   cursor: pointer;
 }
@@ -1224,12 +1213,12 @@ button {
 }
 
 .lrow:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.7);
 }
 
 .lrow.is-selected {
-  background: var(--accent-soft);
-  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--flag-soft);
+  box-shadow: inset 3px 0 0 var(--flag);
 }
 
 .lhead {
@@ -1237,7 +1226,7 @@ button {
   top: 0;
   z-index: 1;
   height: 30px;
-  background: var(--surface-2);
+  background: var(--paper-3);
   cursor: default;
 }
 
@@ -1248,7 +1237,7 @@ button {
   font: 500 10px/1 var(--mono);
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--text-2);
+  color: var(--ink-2);
 }
 
 .lhead .num button {
@@ -1257,7 +1246,7 @@ button {
 }
 
 .lhead button[aria-sort]:not([aria-sort="none"]) {
-  color: var(--accent-ink);
+  color: var(--flag-ink);
 }
 
 .ledger-collapsed {
@@ -1278,37 +1267,12 @@ button {
 .maplibregl-ctrl-group {
   border-radius: var(--radius) !important;
   box-shadow: var(--shadow) !important;
-  border: 1px solid var(--line-strong);
-  background: var(--surface) !important;
-}
-
-.maplibregl-ctrl-group button + button {
-  border-top: 1px solid var(--line) !important;
-}
-
-.maplibregl-ctrl-group button:hover {
-  background: var(--surface-2) !important;
-}
-
-.maplibregl-ctrl-icon {
-  filter: invert(0.92);
-}
-
-.maplibregl-ctrl-scale {
-  background: rgba(12, 15, 19, 0.8) !important;
-  border-color: var(--text-2) !important;
-  color: var(--text-2) !important;
-  font: 10.5px/1.4 var(--mono) !important;
-}
-
-.maplibregl-ctrl-attrib a {
-  color: var(--text-2) !important;
+  border: 1px solid var(--rule-strong);
 }
 
 .maplibregl-ctrl-attrib {
   font-size: 10px;
-  background: rgba(12, 15, 19, 0.75) !important;
-  color: var(--text-3);
+  background: rgba(250, 247, 240, 0.8) !important;
 }
 
 .maplibregl-ctrl-top-right {
@@ -1364,7 +1328,7 @@ button {
   }
   .sidebar {
     border-right: 0;
-    border-bottom: 1px solid var(--line-strong);
+    border-bottom: 1px solid var(--rule-strong);
   }
   .files-section {
     max-height: 260px;
@@ -1403,4 +1367,124 @@ button {
 
 .has-inspector .maplibregl-ctrl-bottom-right {
   right: calc(var(--inspector-w) + 14px);
+}
+
+/* ------------------------------------------------------------ interactivity */
+
+.lrow.is-hovered:not(.is-selected) {
+  background: rgba(228, 83, 42, 0.06);
+}
+
+.draw-tools button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.draw-tools button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.draw-hud {
+  top: 14px;
+  left: 50%;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: "main actions" "hint hint";
+  gap: 6px 22px;
+  width: min(560px, calc(100% - 28px));
+  padding: 12px 16px;
+  transform: translateX(-50%);
+  border-left: 3px solid var(--water);
+  animation: drop-in 0.2s ease;
+}
+
+@keyframes drop-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+}
+
+.draw-hud-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.draw-hud-value {
+  font: 400 30px/1 var(--serif);
+}
+
+.draw-hud-sub {
+  font: 11px/1.3 var(--mono);
+  color: var(--ink-3);
+}
+
+.draw-hud-actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.draw-hud-hint {
+  grid-area: hint;
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.draw-hud-hint kbd {
+  padding: 0 4px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  background: var(--paper-2);
+  font: 11px/1.4 var(--mono);
+}
+
+.drop-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(243, 238, 227, 0.82);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+  animation: fade 0.15s ease;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.drop-veil-card {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 36px 56px;
+  border: 2px dashed var(--flag);
+  border-radius: 14px;
+  background: var(--paper-2);
+  color: var(--flag-ink);
+  box-shadow: var(--shadow);
+}
+
+.drop-veil-card strong {
+  font: 400 34px/1 var(--serif);
+  color: var(--ink);
+}
+
+.drop-veil-card span {
+  font: 12px/1 var(--mono);
+  color: var(--ink-3);
 }
