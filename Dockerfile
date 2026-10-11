@@ -16,6 +16,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /srv
 
+# rasterio's wheel bundles GDAL but links the system Expat XML parser, which the
+# slim image omits.
+RUN apt-get update     && apt-get install -y --no-install-recommends libexpat1     && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies first so this layer is cached across code changes.
 COPY pyproject.toml README.md ./
 RUN mkdir app && touch app/__init__.py && pip install . && rm -rf app
