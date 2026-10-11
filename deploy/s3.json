@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "traverse",
+      "credentials": [{ "accessKey": "traverse", "secretKey": "traverse-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

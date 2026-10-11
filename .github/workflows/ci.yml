@@ -75,7 +75,7 @@ jobs:
         run: npm run build
 
   compose:
-    # Boots docker-compose.yml (API, Celery worker, PostGIS, Redis, MinIO, Prometheus)
+    # Boots docker-compose.yml (API, Celery worker, PostGIS, Redis, S3, Prometheus)
     # and pushes uploads through the real queue, worker and object storage.
     runs-on: ubuntu-latest
     needs: [backend, frontend]
@@ -83,7 +83,7 @@ jobs:
       GEO_INTEGRATION: "1"
       GEO_DATABASE_URL: postgresql+psycopg://traverse:traverse@localhost:5432/traverse
       GEO_STORAGE_BACKEND: s3
-      GEO_S3_ENDPOINT_URL: http://localhost:9000
+      GEO_S3_ENDPOINT_URL: http://localhost:8333
       GEO_S3_ACCESS_KEY: traverse
       GEO_S3_SECRET_KEY: traverse-secret
       GEO_TASK_MODE: celery

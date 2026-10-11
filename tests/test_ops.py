@@ -93,23 +93,23 @@ def test_local_storage_rejects_path_traversal(tmp_path):
         store.read_bytes("../outside.bin")
 
 
-def test_s3_gdal_environment_for_minio():
-    s3 = S3Storage("traverse", "http://minio:9000", "key", "secret")
+def test_s3_gdal_environment_for_self_hosted_s3():
+    s3 = S3Storage("traverse", "http://s3:8333", "key", "secret")
     env = s3.gdal_env()
     assert s3.gdal_path("rasters/x.tif") == "/vsis3/traverse/rasters/x.tif"
-    assert env["AWS_S3_ENDPOINT"] == "minio:9000"
+    assert env["AWS_S3_ENDPOINT"] == "s3:8333"
     assert env["AWS_HTTPS"] == "NO"
     assert env["AWS_VIRTUAL_HOSTING"] == "FALSE"
     assert env["AWS_ACCESS_KEY_ID"] == "key"
 
 
 # --------------------------------------------------------------------------
-# Integration: real worker, Redis, MinIO and PostGIS (CI "integration" job).
+# Integration: real worker, Redis, S3 and PostGIS (CI "compose" job).
 
 
 @pytest.mark.integration
 def test_full_stack_upload_through_worker(integration_client):
-    """Upload -> 202 -> worker (separate process) -> COMPLETED, DEM read from MinIO."""
+    """Upload -> 202 -> worker (separate process) -> COMPLETED, DEM read from S3."""
     c = integration_client
     kml = f.kml(f.placemark(f.kml_polygon([(77.59, 12.97), (77.6, 12.97), (77.6, 12.98), (77.59, 12.98)])))
     file_id = c.post("/api/files/", files={"file": ("plot.kml", kml)}).json()["id"]
@@ -129,7 +129,7 @@ def test_full_stack_upload_through_worker(integration_client):
     assert wait(f"/api/files/{file_id}/")["status"] == "COMPLETED"
     dem = wait(f"/api/rasters/{dem_id}/")
     assert dem["status"] == "COMPLETED", dem
-    # Tiles and analyses read the COG straight from MinIO via /vsis3/.
+    # Tiles and analyses read the COG straight from S3 via /vsis3/.
     lon, lat = (dem["bbox"][0] + dem["bbox"][2]) / 2, (dem["bbox"][1] + dem["bbox"][3]) / 2
     assert c.get(f"/api/rasters/{dem_id}/altitude/", params={"lon": lon, "lat": lat}).json()["elevation_m"]
     assert np.isfinite(c.get(f"/api/rasters/{dem_id}/").json()["z_max"])

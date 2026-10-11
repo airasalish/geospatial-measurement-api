@@ -47,7 +47,7 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
-markers = ["integration: needs a real worker, Redis, MinIO and PostGIS (GEO_INTEGRATION=1)"]
+markers = ["integration: needs a real worker, Redis, S3 and PostGIS (GEO_INTEGRATION=1)"]
 filterwarnings = [
     # Starlette nudges towards httpx2 for TestClient; httpx works and is the stable choice for now.
     "ignore:Using .httpx. with .starlette.testclient. is deprecated",

@@ -38,10 +38,10 @@ class Settings(BaseSettings):
     max_raster_upload_bytes: int = 500 * 1024 * 1024
     max_raster_pixels: int = 250_000_000
 
-    # Blob storage: "local" (storage_dir) or "s3" (S3 or MinIO).
+    # Blob storage: "local" (storage_dir) or "s3" (AWS S3 or any S3-compatible store).
     storage_backend: Literal["local", "s3"] = "local"
     s3_bucket: str = "traverse"
-    s3_endpoint_url: str | None = None  # e.g. http://minio:9000; None for AWS
+    s3_endpoint_url: str | None = None  # e.g. http://s3:8333 (SeaweedFS); None for AWS
     s3_access_key: str | None = None
     s3_secret_key: str | None = None
     s3_region: str = "us-east-1"

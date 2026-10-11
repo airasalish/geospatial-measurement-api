@@ -3,7 +3,7 @@
 The service stores *keys*, never paths, so the backend can change:
 
 * ``LocalStorage``: a directory. Development, tests and the single-container demo.
-* ``S3Storage``: S3 or any S3-compatible store (MinIO in docker-compose).
+* ``S3Storage``: S3 or any S3-compatible store (SeaweedFS in docker-compose).
 
 Rasters are never downloaded to be read. ``gdal_path`` returns a path GDAL opens
 directly (a local path, or ``/vsis3/bucket/key``), and ``gdal_env`` gives the
@@ -141,7 +141,7 @@ class S3Storage:
     def gdal_env(self) -> dict[str, str]:
         env = {
             "AWS_REGION": self.region,
-            "AWS_VIRTUAL_HOSTING": "FALSE",  # path-style, as MinIO expects
+            "AWS_VIRTUAL_HOSTING": "FALSE",  # path-style, as self-hosted S3 stores expect
             "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",  # don't LIST the bucket on open
             "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.tiff",
         }
