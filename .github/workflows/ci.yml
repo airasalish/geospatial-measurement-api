@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Type-check
+        run: mypy app
+      - name: Test
+        run: pytest --cov --cov-report=term-missing --cov-fail-under=90
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t geo-api .
+      - name: Smoke test
+        run: |
+          docker run -d --name geo -p 8000:8000 geo-api
+          for i in $(seq 1 20); do curl -fs localhost:8000/health && break; sleep 1; done
+          curl -fs -F "file=@samples/site_survey.kml" localhost:8000/api/files/ | tee /dev/stderr | grep -q '"status":"COMPLETED"'
