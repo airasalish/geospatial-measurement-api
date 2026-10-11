@@ -8,22 +8,28 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from app.errors import NotFound
-from app.models import Feature, MeasurementStatus, UploadedFile
+from app.models import Feature, MeasurementStatus, UploadedFile, User
 from app.schemas import MeasurementSummary
 
 
-def get_file(session: Session, file_id: str) -> UploadedFile:
+def get_file(session: Session, file_id: str, user: User | None = None) -> UploadedFile:
+    """The file, if it exists and (when signed in) belongs to the user. Otherwise 404."""
     record = session.get(UploadedFile, file_id)
-    if record is None:
+    if record is None or (user is not None and record.owner_id != user.id):
         raise NotFound(f"File {file_id!r} not found.")
     return record
 
 
-def list_files(session: Session, limit: int, offset: int) -> tuple[int, Sequence[UploadedFile]]:
-    total = session.scalar(select(func.count()).select_from(UploadedFile)) or 0
-    rows = session.scalars(
-        select(UploadedFile).order_by(UploadedFile.created_at.desc()).limit(limit).offset(offset)
-    ).all()
+def list_files(
+    session: Session, limit: int, offset: int, user: User | None = None, project_id: str | None = None
+) -> tuple[int, Sequence[UploadedFile]]:
+    stmt = select(UploadedFile)
+    if user is not None:
+        stmt = stmt.where(UploadedFile.owner_id == user.id)
+    if project_id is not None:
+        stmt = stmt.where(UploadedFile.project_id == project_id)
+    total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = session.scalars(stmt.order_by(UploadedFile.created_at.desc()).limit(limit).offset(offset)).all()
     return total, rows
 
 

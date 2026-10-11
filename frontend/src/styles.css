@@ -1839,3 +1839,67 @@ button {
     border-bottom: 1px solid var(--rule);
   }
 }
+
+/* ---------------------------------------------------------------- accounts */
+
+.login-wrap {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.login {
+  position: static;
+  display: grid;
+  gap: 12px;
+  width: min(380px, 100%);
+  padding: 26px;
+}
+
+.login h2 {
+  margin: 4px 0 0;
+  font: 400 26px/1.1 var(--serif);
+}
+
+.login-brand {
+  padding: 0 0 12px;
+}
+
+.project-bar {
+  display: grid;
+  gap: 8px;
+}
+
+.project-bar .who {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.project-bar .who .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-select,
+.new-project {
+  display: flex;
+  gap: 6px;
+}
+
+.project-select select,
+.new-project input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: #fff;
+  font: 13px var(--sans);
+}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  account,
   api,
   ApiError,
   type BaseSpec,
@@ -9,12 +10,16 @@ import {
   type MapCollection,
   type MeasurementSummary,
   type ProfileResult,
+  type Project,
   type Raster,
   terrain,
   type TerrainTarget,
   uploadTo,
+  type User,
   type VolumeResult,
 } from "./api";
+import { getToken, setProject, setToken } from "./auth";
+import { LoginScreen, ProjectBar } from "./components/Account";
 import { Inspector } from "./components/Inspector";
 import { Ledger } from "./components/Ledger";
 import { type DemLayer, type DrawKind, type FitRequest, type FocusRequest, type LngLat, MapView } from "./components/MapView";
@@ -90,6 +95,13 @@ type Bottom = "ledger" | "profile" | "report";
 const QUARRY_SAMPLE = ["quarry_dsm_2026-01.tif", "quarry_dsm_2026-03.tif", "quarry_outlines.kml"];
 
 export default function App() {
+  // ---- accounts (only when the deployment sets GEO_AUTH_REQUIRED=true)
+  const [authRequired, setAuthRequired] = useState<boolean | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [project, setProjectState] = useState<string | null>(null);
+  const ready = authRequired === false || (authRequired === true && user !== null);
+
   // ---- vector files
   const [files, setFiles] = useState<GeoFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(true);
@@ -196,14 +208,61 @@ export default function App() {
     }
   }, []);
 
-  // initial load + deep link
+  // auth handshake: open deployments skip straight to the app
   useEffect(() => {
+    account
+      .config()
+      .then(async ({ auth_required }) => {
+        if (auth_required && getToken()) {
+          try {
+            setUser(await account.me());
+          } catch {
+            setToken(null);
+          }
+        }
+        setAuthRequired(auth_required);
+      })
+      .catch(() => setAuthRequired(false));
+  }, []);
+
+  useEffect(() => {
+    if (user) account.projects().then(setProjects).catch(() => undefined);
+  }, [user]);
+
+  // initial load + deep link, once allowed in
+  useEffect(() => {
+    if (!ready) return;
     void refreshFiles();
     void refreshDems();
     const { file, feature, dem: demId } = readUrl();
     if (file) void openFile(file, feature);
     if (demId) void openDem(demId, !file);
-  }, [refreshFiles, refreshDems, openFile, openDem]);
+  }, [ready, refreshFiles, refreshDems, openFile, openDem]);
+
+  const signOut = () => {
+    setToken(null);
+    setProject(null);
+    setProjectState(null);
+    setUser(null);
+    setActive(null);
+    setDem(null);
+    setFiles([]);
+    setDems([]);
+  };
+
+  const chooseProject = (id: string | null) => {
+    setProject(id);
+    setProjectState(id);
+    setActive(null);
+    setDem(null);
+    void refreshFiles();
+    void refreshDems();
+  };
+
+  // A 401 anywhere means the session ended: back to sign-in.
+  useEffect(() => {
+    if (error?.status === 401 && authRequired) signOut();
+  }, [error, authRequired]);
 
   // keep the view in the URL so it can be shared
   useEffect(() => {
@@ -238,6 +297,7 @@ export default function App() {
       void refreshDems();
     } finally {
       setUpload(null);
+      if (user) account.projects().then(setProjects).catch(() => undefined); // refresh counts
     }
   };
 
@@ -461,6 +521,9 @@ export default function App() {
     collection?.features.some((f) => f.properties.geometry_type === "Polygon" || f.properties.geometry_type === "MultiPolygon"),
   );
 
+  if (authRequired === null) return <div className="loading-veil"><span className="pill">Loading…</span></div>;
+  if (authRequired && !user) return <LoginScreen onSignedIn={setUser} />;
+
   return (
     <div
       className={`app${sidePanel ? " has-inspector" : ""}${bottomKind && bottomOpen ? " has-ledger" : ""}`}
@@ -476,6 +539,24 @@ export default function App() {
             <p>Survey-grade measurement</p>
           </div>
         </div>
+        {user && (
+          <ProjectBar
+            user={user}
+            projects={projects}
+            current={project}
+            onSelect={chooseProject}
+            onCreate={(name) =>
+              account
+                .createProject(name)
+                .then((p) => {
+                  setProjects((ps) => [...ps, p].sort((a, b) => a.name.localeCompare(b.name)));
+                  chooseProject(p.id);
+                })
+                .catch((e) => e instanceof ApiError && setError(e))
+            }
+            onSignOut={signOut}
+          />
+        )}
         <div className="section">
           <h2 className="section-label">
             <span>

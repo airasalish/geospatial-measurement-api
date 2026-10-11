@@ -15,9 +15,10 @@ from starlette.datastructures import URL
 from starlette.types import Receive, Scope, Send
 
 from app import metrics
+from app.api.auth import router as auth_router
 from app.api.files import router as files_router
 from app.api.rasters import router as rasters_router
-from app.config import Settings, get_settings, resolve_path
+from app.config import DEV_JWT_SECRET, Settings, get_settings, resolve_path
 from app.db import Database
 from app.errors import GeoAPIError
 from app.schemas import ErrorDetail, ErrorResponse
@@ -79,6 +80,10 @@ def configure_logging(fmt: str) -> None:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    if settings.auth_required and settings.jwt_secret == DEV_JWT_SECRET:
+        raise RuntimeError("GEO_AUTH_REQUIRED is on: set GEO_JWT_SECRET to a long random value.")
+    if settings.auth_required and len(settings.jwt_secret.encode()) < 32:
+        raise RuntimeError("GEO_JWT_SECRET must be at least 32 bytes for HS256 (RFC 7518).")
     db = Database(settings.database_url)
     storage = make_storage(settings, resolve_path(settings.storage_dir))
 
@@ -151,6 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def prometheus() -> Response:
         return metrics.metrics_response()
 
+    app.include_router(auth_router)
     app.include_router(files_router)
     app.include_router(rasters_router)
 

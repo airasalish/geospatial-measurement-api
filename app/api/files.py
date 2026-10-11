@@ -3,15 +3,16 @@
 from collections.abc import Iterator
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Path, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Path, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
+from app.auth import UserDep
 from app.config import Settings
-from app.errors import FileTooLarge, GeoAPIError
+from app.errors import FileTooLarge, GeoAPIError, NotFound
 from app.geo.readers import check_extension
-from app.models import MeasurementStatus
+from app.models import MeasurementStatus, Project, User
 from app.schemas import (
     ErrorResponse,
     FeatureOut,
@@ -58,6 +59,19 @@ def pagination(
 
 
 PageDep = Annotated[tuple[int, int], Depends(pagination)]
+
+
+def owner_and_project(
+    request: Request, user: User | None, project_id: str | None
+) -> tuple[str | None, str | None]:
+    """Owner for a new upload, and its project after checking the user owns it."""
+    if user is None or project_id is None:
+        return (user.id if user else None), None
+    with request.app.state.db.session_factory() as session:
+        project = session.get(Project, project_id)
+        if project is None or project.owner_id != user.id:
+            raise NotFound(f"Project {project_id!r} not found.")
+    return user.id, project_id
 
 
 def parse_bbox(
@@ -109,24 +123,27 @@ async def upload_file(
     response: Response,
     settings: SettingsDep,
     storage: StorageDep,
+    user: UserDep,
     file: Annotated[UploadFile, File(description=".zip (Shapefile), .kml or .kmz")],
+    project_id: Annotated[str | None, Form(description="Project to file this upload under")] = None,
 ) -> FileOut:
     filename = file.filename or ""
     check_extension(filename)  # reject before reading the body
     data = await _read_upload(file, settings.max_upload_bytes)
+    owner, project = owner_and_project(request, user, project_id)
 
     # Parsing and reprojection are CPU-bound. Run them in the thread pool so the
     # event loop stays free for other requests.
     def _process() -> FileOut:
         with request.app.state.db.session_factory() as session:
-            record = ingest_upload(session, settings, filename, data)
+            record = ingest_upload(session, settings, filename, data, owner, project)
             return FileOut.model_validate(record)
 
     def _enqueue() -> FileOut:
         from app import worker
 
         with request.app.state.db.session_factory() as session:
-            record = create_record(session, filename, data)
+            record = create_record(session, filename, data, owner, project)
             key = f"uploads/files/{record.id}/{record.filename}"
             storage.put_bytes(data, key)
             worker.process_file.delay(record.id, key)
@@ -143,24 +160,29 @@ async def upload_file(
 
 
 @router.get("/", response_model=Page[FileOut], summary="List uploaded files")
-def list_files(session: SessionDep, page: PageDep) -> Page[FileOut]:
+def list_files(
+    session: SessionDep,
+    user: UserDep,
+    page: PageDep,
+    project_id: Annotated[str | None, Query(description="Only files in this project")] = None,
+) -> Page[FileOut]:
     limit, offset = page
-    total, rows = queries.list_files(session, limit, offset)
+    total, rows = queries.list_files(session, limit, offset, user, project_id)
     return Page[FileOut](
         total=total, limit=limit, offset=offset, items=[FileOut.model_validate(r) for r in rows]
     )
 
 
 @router.get("/{file_id}/", response_model=FileOut, responses=_errors, summary="File information")
-def get_file(file_id: str, session: SessionDep) -> FileOut:
-    return FileOut.model_validate(queries.get_file(session, file_id))
+def get_file(file_id: str, session: SessionDep, user: UserDep) -> FileOut:
+    return FileOut.model_validate(queries.get_file(session, file_id, user))
 
 
 @router.delete(
     "/{file_id}/", status_code=status.HTTP_204_NO_CONTENT, responses=_errors, summary="Delete a file"
 )
-def delete_file(file_id: str, session: SessionDep) -> Response:
-    session.delete(queries.get_file(session, file_id))
+def delete_file(file_id: str, session: SessionDep, user: UserDep) -> Response:
+    session.delete(queries.get_file(session, file_id, user))
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -174,11 +196,12 @@ def delete_file(file_id: str, session: SessionDep) -> Response:
 def list_features(
     file_id: str,
     session: SessionDep,
+    user: UserDep,
     page: PageDep,
     bbox: BBoxDep,
     geometry_type: Annotated[str | None, Query(description="e.g. Polygon")] = None,
 ) -> Page[FeatureOut]:
-    queries.get_file(session, file_id)
+    queries.get_file(session, file_id, user)
     limit, offset = page
     total, rows = queries.list_features(
         session, file_id, limit, offset, geometry_type=geometry_type, bbox=bbox
@@ -198,10 +221,11 @@ def get_geojson(
     file_id: str,
     request: Request,
     session: SessionDep,
+    user: UserDep,
     settings: SettingsDep,
     limit: Annotated[int | None, Query(ge=1, description="Max features (capped by server).")] = None,
 ) -> StreamingResponse:
-    record = queries.get_file(session, file_id)
+    record = queries.get_file(session, file_id, user)
     cap = min(limit or settings.max_geojson_features, settings.max_geojson_features)
     headers = {
         "X-Total-Count": str(record.feature_count),
@@ -227,8 +251,9 @@ def vector_tile(
     x: Annotated[int, Path(ge=0)],
     y: Annotated[int, Path(ge=0)],
     session: SessionDep,
+    user: UserDep,
 ) -> Response:
-    queries.get_file(session, file_id)
+    queries.get_file(session, file_id, user)
     if x >= 2**z or y >= 2**z:
         raise GeoAPIError("Tile coordinates are out of range for this zoom.")
     data = file_tile(session, file_id, z, x, y)
@@ -247,7 +272,8 @@ def vector_tile(
     responses=_errors,
     summary="A single feature",
 )
-def get_feature(file_id: str, index: int, session: SessionDep) -> FeatureOut:
+def get_feature(file_id: str, index: int, session: SessionDep, user: UserDep) -> FeatureOut:
+    queries.get_file(session, file_id, user)
     return FeatureOut.model_validate(queries.get_feature(session, file_id, index))
 
 
@@ -260,12 +286,13 @@ def get_feature(file_id: str, index: int, session: SessionDep) -> FeatureOut:
 def list_measurements(
     file_id: str,
     session: SessionDep,
+    user: UserDep,
     page: PageDep,
     bbox: BBoxDep,
     status_filter: Annotated[MeasurementStatus | None, Query(alias="status")] = None,
     geometry_type: Annotated[str | None, Query(description="e.g. Polygon")] = None,
 ) -> MeasurementsResponse:
-    queries.get_file(session, file_id)
+    queries.get_file(session, file_id, user)
     limit, offset = page
     total, rows = queries.list_features(session, file_id, limit, offset, status_filter, geometry_type, bbox)
     return MeasurementsResponse(

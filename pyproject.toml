@@ -26,6 +26,7 @@ dependencies = [
     "celery[redis]>=5.4",
     "boto3>=1.34",
     "prometheus-client>=0.20",
+    "pyjwt>=2.8",
 ]
 
 [project.optional-dependencies]
@@ -83,7 +84,7 @@ ignore_missing_imports = true
 exclude = ["tests/"]
 
 [[tool.mypy.overrides]]
-module = ["shapefile.*", "shapely.*", "defusedxml.*", "rasterio.*", "scipy.*", "affine.*", "rio_tiler.*", "morecantile.*", "mapbox_vector_tile.*", "celery.*", "boto3.*", "botocore.*", "redis.*"]
+module = ["shapefile.*", "shapely.*", "defusedxml.*", "rasterio.*", "scipy.*", "affine.*", "rio_tiler.*", "morecantile.*", "mapbox_vector_tile.*", "celery.*", "boto3.*", "botocore.*", "redis.*", "jwt.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

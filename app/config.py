@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEV_JWT_SECRET = "dev-only-change-me"  # noqa: S105  (refused at startup when auth is on)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GEO_", env_file=".env", extra="ignore")
@@ -51,6 +53,11 @@ class Settings(BaseSettings):
     task_mode: Literal["sync", "celery"] = "sync"
     redis_url: str = "redis://localhost:6379/0"
     celery_eager: bool = False  # run tasks in-process (tests)
+
+    # Accounts. Off by default so the demo is open; turn on for multi-tenant use.
+    auth_required: bool = False
+    jwt_secret: str = DEV_JWT_SECRET
+    jwt_ttl_minutes: int = 12 * 60
 
     # Observability
     log_format: Literal["text", "json"] = "text"

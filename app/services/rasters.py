@@ -21,8 +21,9 @@ from sqlalchemy.orm import Session
 from app import metrics
 from app.config import Settings
 from app.errors import GeoAPIError, InvalidGeoFile, NotFound, UnsupportedFileType
-from app.models import Feature, FileStatus, Raster
+from app.models import Feature, FileStatus, Raster, User
 from app.schemas import FeatureRef
+from app.services import queries
 from app.services.ingestion import ProcessingFailed
 from app.storage import Storage
 from app.terrain.ingest import validate_and_convert
@@ -48,7 +49,9 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def create_raster_record(session: Session, filename: str, upload: Path) -> Raster:
+def create_raster_record(
+    session: Session, filename: str, upload: Path, owner_id: str | None = None, project_id: str | None = None
+) -> Raster:
     filename = PurePath(filename.replace("\\", "/")).name[:255] or "dem.tif"
     check_raster_extension(filename)
     record = Raster(
@@ -56,6 +59,8 @@ def create_raster_record(session: Session, filename: str, upload: Path) -> Raste
         size_bytes=upload.stat().st_size,
         sha256=_sha256(upload),
         status=FileStatus.PROCESSING,
+        owner_id=owner_id,
+        project_id=project_id,
     )
     session.add(record)
     session.commit()
@@ -98,12 +103,17 @@ def process_raster_record(
 
 
 def ingest_raster(
-    session: Session, settings: Settings, storage: Storage, filename: str, upload: Path
+    session: Session,
+    settings: Settings,
+    storage: Storage,
+    filename: str,
+    upload: Path,
+    owner_id: str | None = None,
+    project_id: str | None = None,
 ) -> Raster:
     """Create and process in one go (sync mode)."""
-    return process_raster_record(
-        session, settings, storage, create_raster_record(session, filename, upload), upload
-    )
+    record = create_raster_record(session, filename, upload, owner_id, project_id)
+    return process_raster_record(session, settings, storage, record, upload)
 
 
 def _fail(session: Session, record: Raster, message: str) -> None:
@@ -114,9 +124,9 @@ def _fail(session: Session, record: Raster, message: str) -> None:
     session.commit()
 
 
-def get_raster(session: Session, raster_id: str, *, ready: bool = True) -> Raster:
+def get_raster(session: Session, raster_id: str, *, ready: bool = True, user: User | None = None) -> Raster:
     record = session.get(Raster, raster_id)
-    if record is None:
+    if record is None or (user is not None and record.owner_id != user.id):
         raise NotFound(f"Raster {raster_id!r} not found.")
     if ready and (record.status != FileStatus.COMPLETED or not record.storage_key):
         raise InvalidGeoFile(f"Raster {raster_id!r} is not ready ({record.status}).")
@@ -139,7 +149,7 @@ def delete_raster(session: Session, storage: Storage, record: Raster) -> None:
 
 
 def resolve_geometry(
-    session: Session, geometry: dict[str, Any] | None, feature: FeatureRef | None
+    session: Session, geometry: dict[str, Any] | None, feature: FeatureRef | None, user: User | None = None
 ) -> BaseGeometry:
     """A WGS84 shapely geometry from inline GeoJSON or a stored feature."""
     if (geometry is None) == (feature is None):
@@ -154,6 +164,7 @@ def resolve_geometry(
             raise GeoAPIError("Geometry must be WGS84 longitude/latitude.")
         return shapely.force_2d(geom)
     assert feature is not None
+    queries.get_file(session, feature.file_id, user)  # ownership check
     row = session.scalar(
         select(Feature).where(Feature.file_id == feature.file_id, Feature.index == feature.index)
     )

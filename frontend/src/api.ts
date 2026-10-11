@@ -1,3 +1,4 @@
+import { authFetch, authHeaders, getProject, projectQuery, withToken } from "./auth";
 // Typed client for the FastAPI backend. Types mirror app/schemas.py.
 
 export type FileStatus = "PROCESSING" | "COMPLETED" | "FAILED";
@@ -103,13 +104,14 @@ async function parseError(res: Response): Promise<ApiError> {
 }
 
 async function get<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, { signal });
+  const res = await authFetch(url, { signal });
   if (!res.ok) throw await parseError(res);
   return res.json() as Promise<T>;
 }
 
 export const api = {
-  listFiles: (limit = 50, signal?: AbortSignal) => get<Page<GeoFile>>(`/api/files/?limit=${limit}`, signal),
+  listFiles: (limit = 50, signal?: AbortSignal) =>
+    get<Page<GeoFile>>(`/api/files/?limit=${limit}${projectQuery()}`, signal),
   getFile: (id: string, signal?: AbortSignal) => get<GeoFile>(`/api/files/${id}/`, signal),
   measurements: (id: string, signal?: AbortSignal) =>
     get<MeasurementsResponse>(`/api/files/${id}/measurements/?limit=1`, signal),
@@ -118,7 +120,7 @@ export const api = {
   feature: (id: string, index: number, signal?: AbortSignal) =>
     get<FeatureDetail>(`/api/files/${id}/features/${index}/`, signal),
   geojson: async (id: string, signal?: AbortSignal) => {
-    const res = await fetch(`/api/files/${id}/geojson/`, { signal });
+    const res = await authFetch(`/api/files/${id}/geojson/`, { signal });
     if (!res.ok) throw await parseError(res);
     return {
       collection: (await res.json()) as MapCollection,
@@ -126,9 +128,9 @@ export const api = {
       total: Number(res.headers.get("X-Total-Count") ?? 0),
     };
   },
-  geojsonUrl: (id: string) => `/api/files/${id}/geojson/`,
+  geojsonUrl: (id: string) => withToken(`/api/files/${id}/geojson/`),
   deleteFile: async (id: string) => {
-    const res = await fetch(`/api/files/${id}/`, { method: "DELETE" });
+    const res = await authFetch(`/api/files/${id}/`, { method: "DELETE" });
     if (!res.ok) throw await parseError(res);
   },
 
@@ -138,7 +140,10 @@ export const api = {
       const xhr = new XMLHttpRequest();
       const form = new FormData();
       form.append("file", file, filename);
+      const project = getProject();
+      if (project) form.append("project_id", project);
       xhr.open("POST", "/api/files/");
+      for (const [k, v] of Object.entries(authHeaders())) xhr.setRequestHeader(k, v);
       xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
       xhr.upload.onload = () => onProgress(1);
       xhr.onerror = () => reject(new ApiError("Network error: is the API running?", 0, "network_error"));
@@ -263,7 +268,7 @@ export interface ProfileResult {
 }
 
 async function post<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, {
+  const res = await authFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -276,14 +281,14 @@ async function post<T>(url: string, body: unknown, signal?: AbortSignal): Promis
 export type TerrainTarget = { geometry: GeoJSON.Geometry } | { feature: FeatureRef };
 
 export const terrain = {
-  list: (signal?: AbortSignal) => get<Page<Raster>>(`/api/rasters/?limit=50`, signal),
+  list: (signal?: AbortSignal) => get<Page<Raster>>(`/api/rasters/?limit=50${projectQuery()}`, signal),
   get: (id: string, signal?: AbortSignal) => get<Raster>(`/api/rasters/${id}/`, signal),
   remove: async (id: string) => {
-    const res = await fetch(`/api/rasters/${id}/`, { method: "DELETE" });
+    const res = await authFetch(`/api/rasters/${id}/`, { method: "DELETE" });
     if (!res.ok) throw await parseError(res);
   },
-  tileUrl: (id: string, style: string) => `/api/rasters/${id}/tiles/{z}/{x}/{y}.png?style=${style}`,
-  downloadUrl: (id: string) => `/api/rasters/${id}/download/`,
+  tileUrl: (id: string, style: string) => withToken(`/api/rasters/${id}/tiles/{z}/{x}/{y}.png?style=${style}`),
+  downloadUrl: (id: string) => withToken(`/api/rasters/${id}/download/`),
   volume: (id: string, target: TerrainTarget, base: BaseSpec, signal?: AbortSignal) =>
     post<VolumeResult>(`/api/rasters/${id}/volume/`, { ...target, base }, signal),
   volumes: (id: string, fileId: string, base: BaseSpec, signal?: AbortSignal) =>
@@ -305,7 +310,10 @@ export function uploadTo<T>(
     const xhr = new XMLHttpRequest();
     const form = new FormData();
     form.append("file", file, filename);
+    const project = getProject();
+    if (project) form.append("project_id", project);
     xhr.open("POST", url);
+    for (const [k, v] of Object.entries(authHeaders())) xhr.setRequestHeader(k, v);
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.upload.onload = () => onProgress(1);
     xhr.onerror = () => reject(new ApiError("Network error: is the API running?", 0, "network_error"));
@@ -327,3 +335,36 @@ export function uploadTo<T>(
 }
 
 export const isRasterName = (name: string) => /\.(tif|tiff)$/i.test(name);
+
+// ------------------------------------------------------------- accounts
+
+export interface User {
+  id: string;
+  email: string;
+  created_at: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  created_at: string;
+  files: number;
+  rasters: number;
+}
+
+export const account = {
+  config: () => get<{ auth_required: boolean }>("/api/auth/config"),
+  me: () => get<User>("/api/auth/me"),
+  register: (email: string, password: string) => post<User>("/api/auth/register", { email, password }),
+  login: async (email: string, password: string) => {
+    const res = await fetch("/api/auth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username: email, password }),
+    });
+    if (!res.ok) throw await parseError(res);
+    return (await res.json()) as { access_token: string; expires_in: number };
+  },
+  projects: () => get<Project[]>("/api/projects/"),
+  createProject: (name: string) => post<Project>("/api/projects/", { name }),
+};

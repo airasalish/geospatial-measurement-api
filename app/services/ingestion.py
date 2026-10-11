@@ -51,7 +51,9 @@ def _clean_filename(filename: str) -> str:
     return PurePath(filename.replace("\\", "/")).name[:255] or "upload"
 
 
-def create_record(session: Session, filename: str, data: bytes) -> UploadedFile:
+def create_record(
+    session: Session, filename: str, data: bytes, owner_id: str | None = None, project_id: str | None = None
+) -> UploadedFile:
     """Validate the name and register the upload (status PROCESSING)."""
     filename = _clean_filename(filename)
     ext = check_extension(filename)
@@ -61,6 +63,8 @@ def create_record(session: Session, filename: str, data: bytes) -> UploadedFile:
         size_bytes=len(data),
         sha256=hashlib.sha256(data).hexdigest(),
         status=FileStatus.PROCESSING,
+        owner_id=owner_id,
+        project_id=project_id,
     )
     session.add(record)
     session.commit()  # the record exists (and is visible) even if processing fails
@@ -100,9 +104,18 @@ def process_record(session: Session, settings: Settings, record: UploadedFile, d
     return record
 
 
-def ingest_upload(session: Session, settings: Settings, filename: str, data: bytes) -> UploadedFile:
+def ingest_upload(
+    session: Session,
+    settings: Settings,
+    filename: str,
+    data: bytes,
+    owner_id: str | None = None,
+    project_id: str | None = None,
+) -> UploadedFile:
     """Create and process in one go (sync mode)."""
-    return process_record(session, settings, create_record(session, filename, data), data)
+    return process_record(
+        session, settings, create_record(session, filename, data, owner_id, project_id), data
+    )
 
 
 def _persist_features(session: Session, settings: Settings, record: UploadedFile, dataset: Dataset) -> None:

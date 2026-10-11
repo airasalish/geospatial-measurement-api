@@ -8,7 +8,7 @@ from pathlib import Path as FsPath
 from typing import Annotated
 
 import rasterio
-from fastapi import APIRouter, File, Path, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, File, Form, Path, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, RedirectResponse
 from shapely.geometry import shape
 from sqlalchemy import func, select
@@ -16,9 +16,10 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app import metrics
-from app.api.files import PageDep, SessionDep, SettingsDep, StorageDep, _errors
+from app.api.files import PageDep, SessionDep, SettingsDep, StorageDep, _errors, owner_and_project
+from app.auth import UserDep
 from app.errors import FileTooLarge
-from app.models import Feature, Raster
+from app.models import Feature, Raster, User
 from app.schemas import (
     AltitudeOut,
     BaseSpec,
@@ -53,10 +54,13 @@ async def upload_raster(
     response: Response,
     settings: SettingsDep,
     storage: StorageDep,
+    user: UserDep,
     file: Annotated[UploadFile, File(description="Single-band elevation GeoTIFF (.tif/.tiff)")],
+    project_id: Annotated[str | None, Form(description="Project to file this DEM under")] = None,
 ) -> RasterOut:
     filename = file.filename or ""
     rasters.check_raster_extension(filename)
+    owner, project = owner_and_project(request, user, project_id)
     with tempfile.TemporaryDirectory() as tmp:
         path = FsPath(tmp) / "upload.tif"
         size = 0
@@ -73,14 +77,14 @@ async def upload_raster(
         def _process() -> RasterOut:
             with request.app.state.db.session_factory() as session:
                 return RasterOut.model_validate(
-                    rasters.ingest_raster(session, settings, storage, filename, path)
+                    rasters.ingest_raster(session, settings, storage, filename, path, owner, project)
                 )
 
         def _enqueue() -> RasterOut:
             from app import worker
 
             with request.app.state.db.session_factory() as session:
-                record = rasters.create_raster_record(session, filename, path)
+                record = rasters.create_raster_record(session, filename, path, owner, project)
                 key = f"uploads/rasters/{record.id}/{record.filename}"
                 storage.put(path, key)
                 worker.process_raster.delay(record.id, key)
@@ -97,33 +101,41 @@ async def upload_raster(
 
 
 @router.get("/", response_model=Page[RasterOut], summary="List DEMs")
-def list_rasters(session: SessionDep, page: PageDep) -> Page[RasterOut]:
+def list_rasters(
+    session: SessionDep,
+    user: UserDep,
+    page: PageDep,
+    project_id: Annotated[str | None, Query(description="Only DEMs in this project")] = None,
+) -> Page[RasterOut]:
     limit, offset = page
-    total = session.scalar(select(func.count()).select_from(Raster)) or 0
-    rows = session.scalars(
-        select(Raster).order_by(Raster.created_at.desc()).limit(limit).offset(offset)
-    ).all()
+    stmt = select(Raster)
+    if user is not None:
+        stmt = stmt.where(Raster.owner_id == user.id)
+    if project_id is not None:
+        stmt = stmt.where(Raster.project_id == project_id)
+    total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = session.scalars(stmt.order_by(Raster.created_at.desc()).limit(limit).offset(offset)).all()
     return Page[RasterOut](
         total=total, limit=limit, offset=offset, items=[RasterOut.model_validate(r) for r in rows]
     )
 
 
 @router.get("/{raster_id}/", response_model=RasterOut, responses=_errors, summary="DEM information")
-def get_raster(raster_id: str, session: SessionDep) -> RasterOut:
-    return RasterOut.model_validate(rasters.get_raster(session, raster_id, ready=False))
+def get_raster(raster_id: str, session: SessionDep, user: UserDep) -> RasterOut:
+    return RasterOut.model_validate(rasters.get_raster(session, raster_id, ready=False, user=user))
 
 
 @router.delete("/{raster_id}/", status_code=204, responses=_errors, summary="Delete a DEM")
-def delete_raster(raster_id: str, session: SessionDep, storage: StorageDep) -> Response:
-    rasters.delete_raster(session, storage, rasters.get_raster(session, raster_id, ready=False))
+def delete_raster(raster_id: str, session: SessionDep, user: UserDep, storage: StorageDep) -> Response:
+    rasters.delete_raster(session, storage, rasters.get_raster(session, raster_id, ready=False, user=user))
     return Response(status_code=204)
 
 
 @router.get(
     "/{raster_id}/download/", responses=_errors, summary="Download the DEM as a Cloud-Optimised GeoTIFF"
 )
-def download_raster(raster_id: str, session: SessionDep, storage: StorageDep) -> Response:
-    record = rasters.get_raster(session, raster_id)
+def download_raster(raster_id: str, session: SessionDep, user: UserDep, storage: StorageDep) -> Response:
+    record = rasters.get_raster(session, raster_id, user=user)
     assert record.storage_key
     stem = FsPath(record.filename).stem
     if storage.local_path(record.storage_key) is None and isinstance(storage, S3Storage):
@@ -136,6 +148,7 @@ def download_raster(raster_id: str, session: SessionDep, storage: StorageDep) ->
 
 def _volume(
     session: Session,
+    user: User | None,
     storage: Storage,
     record: Raster,
     ds: rasterio.io.DatasetReader,
@@ -148,7 +161,7 @@ def _volume(
     if base.method == "surface":
         if not base.raster_id:
             raise TerrainError("Base method 'surface' needs 'raster_id'.")
-        other_rec = rasters.get_raster(session, base.raster_id)
+        other_rec = rasters.get_raster(session, base.raster_id, user=user)
         other = stack.enter_context(rasters.open_raster(storage, other_rec))
     result = compute_volume(
         ds,
@@ -167,12 +180,14 @@ def _volume(
     responses=_errors,
     summary="Cut/fill volume, 3D surface area and slope inside a polygon",
 )
-def volume(raster_id: str, body: VolumeRequest, session: SessionDep, storage: StorageDep) -> VolumeOut:
-    record = rasters.get_raster(session, raster_id)
-    geom = rasters.resolve_geometry(session, body.geometry, body.feature)
+def volume(
+    raster_id: str, body: VolumeRequest, session: SessionDep, user: UserDep, storage: StorageDep
+) -> VolumeOut:
+    record = rasters.get_raster(session, raster_id, user=user)
+    geom = rasters.resolve_geometry(session, body.geometry, body.feature, user)
     with ExitStack() as stack:
         ds = stack.enter_context(rasters.open_raster(storage, record))
-        return _volume(session, storage, record, ds, geom, body.base, body.slope_threshold_deg, stack)
+        return _volume(session, user, storage, record, ds, geom, body.base, body.slope_threshold_deg, stack)
 
 
 @router.post(
@@ -182,10 +197,10 @@ def volume(raster_id: str, body: VolumeRequest, session: SessionDep, storage: St
     summary="Volumes for every polygon of an uploaded file (e.g. a stockpile inventory)",
 )
 def batch_volumes(
-    raster_id: str, body: BatchVolumeRequest, session: SessionDep, storage: StorageDep
+    raster_id: str, body: BatchVolumeRequest, session: SessionDep, user: UserDep, storage: StorageDep
 ) -> BatchVolumeOut:
-    record = rasters.get_raster(session, raster_id)
-    queries.get_file(session, body.file_id)
+    record = rasters.get_raster(session, raster_id, user=user)
+    queries.get_file(session, body.file_id, user)
     features = session.scalars(
         select(Feature).where(Feature.file_id == body.file_id).order_by(Feature.index)
     ).all()
@@ -202,7 +217,8 @@ def batch_volumes(
                 continue
             try:
                 out = _volume(
-                    session, storage, record, ds, shape(json.loads(f.geometry_wgs84)),
+                    session,
+                    user, storage, record, ds, shape(json.loads(f.geometry_wgs84)),
                     body.base, body.slope_threshold_deg, stack,
                 )  # fmt: skip
             except TerrainError as exc:
@@ -229,9 +245,11 @@ def batch_volumes(
     responses=_errors,
     summary="Elevation profile along a line (haul-road grades, cross-sections)",
 )
-def profile(raster_id: str, body: ProfileRequest, session: SessionDep, storage: StorageDep) -> ProfileOut:
-    record = rasters.get_raster(session, raster_id)
-    geom = rasters.resolve_geometry(session, body.geometry, body.feature)
+def profile(
+    raster_id: str, body: ProfileRequest, session: SessionDep, user: UserDep, storage: StorageDep
+) -> ProfileOut:
+    record = rasters.get_raster(session, raster_id, user=user)
+    geom = rasters.resolve_geometry(session, body.geometry, body.feature, user)
     with rasters.open_raster(storage, record) as ds:
         result = compute_profile(ds, geom, max_samples=body.max_samples)
     return ProfileOut(raster_id=record.id, **asdict(result))
@@ -243,11 +261,12 @@ def profile(raster_id: str, body: ProfileRequest, session: SessionDep, storage: 
 def altitude(
     raster_id: str,
     session: SessionDep,
+    user: UserDep,
     storage: StorageDep,
     lon: Annotated[float, Query(ge=-180, le=180)],
     lat: Annotated[float, Query(ge=-90, le=90)],
 ) -> AltitudeOut:
-    record = rasters.get_raster(session, raster_id)
+    record = rasters.get_raster(session, raster_id, user=user)
     with rasters.open_raster(storage, record) as ds:
         z = sample_altitude(ds, lon, lat)
     return AltitudeOut(raster_id=record.id, lon=lon, lat=lat, elevation_m=z)
@@ -264,10 +283,11 @@ def tile(
     x: Annotated[int, Path(ge=0)],
     y: Annotated[int, Path(ge=0)],
     session: SessionDep,
+    user: UserDep,
     storage: StorageDep,
     style: Annotated[Style, Query(description="hillshade | elevation | slope")] = "elevation",
 ) -> Response:
-    record = rasters.get_raster(session, raster_id)
+    record = rasters.get_raster(session, raster_id, user=user)
     assert record.storage_key
     with metrics.ANALYSIS.labels("tile").time():
         png = render_tile(
@@ -289,10 +309,11 @@ def tilejson(
     raster_id: str,
     request: Request,
     session: SessionDep,
+    user: UserDep,
     storage: StorageDep,
     style: Annotated[Style, Query()] = "elevation",
 ) -> dict[str, object]:
-    record = rasters.get_raster(session, raster_id)
+    record = rasters.get_raster(session, raster_id, user=user)
     assert record.storage_key
     minzoom, maxzoom = tile_zoom_range(storage.gdal_path(record.storage_key), storage.rasterio_env())
     url = str(request.url_for("tile", raster_id=raster_id, z=0, x=0, y=0)).replace(
