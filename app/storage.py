@@ -108,7 +108,11 @@ class S3Storage:
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
             region_name=region,
-            config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 5, "mode": "standard"}),
+            config=Config(
+                signature_version="s3v4",  # SigV4 presigned URLs (SigV2 is legacy)
+                s3={"addressing_style": "path"},
+                retries={"max_attempts": 5, "mode": "standard"},
+            ),
         )
 
     def ensure_bucket(self) -> None:
