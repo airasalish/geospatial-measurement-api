@@ -4,11 +4,11 @@ import json
 import tempfile
 from contextlib import ExitStack
 from dataclasses import asdict
-from pathlib import Path
+from pathlib import Path as FsPath
 from typing import Annotated
 
 import rasterio
-from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Path, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from shapely.geometry import shape
 from sqlalchemy import func, select
@@ -34,6 +34,7 @@ from app.schemas import (
 from app.services import queries, rasters
 from app.storage import Storage
 from app.terrain.analysis import TerrainError, compute_profile, compute_volume, sample_altitude
+from app.terrain.tiles import Style, render_tile, tile_zoom_range
 
 router = APIRouter(prefix="/api/rasters", tags=["terrain"])
 UPLOAD_CHUNK = 1024 * 1024
@@ -64,7 +65,7 @@ async def upload_raster(
     filename = file.filename or ""
     rasters.check_raster_extension(filename)
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "upload.tif"
+        path = FsPath(tmp) / "upload.tif"
         size = 0
         with path.open("wb") as fh:  # stream to disk: DEMs are too big for memory
             while chunk := await file.read(UPLOAD_CHUNK):
@@ -116,7 +117,7 @@ def delete_raster(raster_id: str, session: SessionDep, storage: StorageDep) -> R
 def download_raster(raster_id: str, session: SessionDep, storage: StorageDep) -> FileResponse:
     record = rasters.get_raster(session, raster_id)
     assert record.storage_key
-    stem = Path(record.filename).stem
+    stem = FsPath(record.filename).stem
     return FileResponse(
         storage.gdal_path(record.storage_key), media_type="image/tiff", filename=f"{stem}.cog.tif"
     )
@@ -239,3 +240,55 @@ def altitude(
     with rasters.open_raster(storage, record) as ds:
         z = sample_altitude(ds, lon, lat)
     return AltitudeOut(raster_id=record.id, lon=lon, lat=lat, elevation_m=z)
+
+
+@router.get(
+    "/{raster_id}/tiles/{z}/{x}/{y}.png",
+    responses={**_errors, 200: {"content": {"image/png": {}}}, 204: {"description": "Tile outside the DEM"}},
+    summary="XYZ map tile rendered from the DEM",
+)
+def tile(
+    raster_id: str,
+    z: Annotated[int, Path(ge=0, le=24)],
+    x: Annotated[int, Path(ge=0)],
+    y: Annotated[int, Path(ge=0)],
+    session: SessionDep,
+    storage: StorageDep,
+    style: Annotated[Style, Query(description="hillshade | elevation | slope")] = "elevation",
+) -> Response:
+    record = rasters.get_raster(session, raster_id)
+    assert record.storage_key
+    png = render_tile(
+        storage.gdal_path(record.storage_key), z, x, y, style, (record.z_min or 0.0, record.z_max or 1.0)
+    )
+    if png is None:
+        return Response(status_code=204)
+    # A raster never changes after upload, so tiles can be cached hard.
+    return Response(
+        png, media_type="image/png", headers={"Cache-Control": "public, max-age=86400, immutable"}
+    )
+
+
+@router.get("/{raster_id}/tilejson.json", responses=_errors, summary="TileJSON for map clients")
+def tilejson(
+    raster_id: str,
+    request: Request,
+    session: SessionDep,
+    storage: StorageDep,
+    style: Annotated[Style, Query()] = "elevation",
+) -> dict[str, object]:
+    record = rasters.get_raster(session, raster_id)
+    assert record.storage_key
+    minzoom, maxzoom = tile_zoom_range(storage.gdal_path(record.storage_key))
+    url = str(request.url_for("tile", raster_id=raster_id, z=0, x=0, y=0)).replace(
+        "/0/0/0.png", "/{z}/{x}/{y}.png"
+    )
+    return {
+        "tilejson": "3.0.0",
+        "name": record.filename,
+        "tiles": [f"{url}?style={style}"],
+        "bounds": record.bbox,
+        "minzoom": minzoom,
+        "maxzoom": maxzoom + 2,  # allow over-zoom for close inspection
+        "elevation_range": [record.z_min, record.z_max],
+    }

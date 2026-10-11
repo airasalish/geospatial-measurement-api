@@ -19,6 +19,7 @@ dependencies = [
     "numpy>=1.26",
     "rasterio>=1.4",
     "scipy>=1.13",
+    "rio-tiler>=7.0",
 ]
 
 [project.optional-dependencies]
@@ -73,5 +74,5 @@ ignore_missing_imports = true
 exclude = ["tests/"]
 
 [[tool.mypy.overrides]]
-module = ["shapefile.*", "shapely.*", "defusedxml.*", "rasterio.*", "scipy.*", "affine.*"]
+module = ["shapefile.*", "shapely.*", "defusedxml.*", "rasterio.*", "scipy.*", "affine.*", "rio_tiler.*", "morecantile.*"]
 ignore_missing_imports = true

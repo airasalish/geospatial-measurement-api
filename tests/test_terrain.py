@@ -417,3 +417,38 @@ def test_list_rasters(client, dem_id):
     body = client.get("/api/rasters/").json()
     assert body["total"] == 1
     assert body["items"][0]["id"] == dem_id
+
+
+# -------------------------------------------------------------------- tiles
+
+
+@pytest.mark.filterwarnings(
+    "ignore::rasterio.errors.NotGeoreferencedWarning"
+)  # PNG tiles carry no georeference
+@pytest.mark.parametrize("style", ["elevation", "hillshade", "slope"])
+def test_tiles_render_inside_and_204_outside(client, dem_id, style):
+    import morecantile
+
+    lon, lat = Transformer.from_crs(f.UTM43, "EPSG:4326", always_xy=True).transform(CX, CY)
+    t = morecantile.tms.get("WebMercatorQuad").tile(lon, lat, 18)
+    r = client.get(f"/api/rasters/{dem_id}/tiles/{t.z}/{t.x}/{t.y}.png", params={"style": style})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert "immutable" in r.headers["cache-control"]
+    with MemoryFile(r.content) as mf, mf.open() as ds:
+        assert (ds.width, ds.height, ds.count) == (256, 256, 4)  # RGBA
+        assert ds.read(4).max() == 255  # some opaque (valid) pixels
+    far = morecantile.tms.get("WebMercatorQuad").tile(0, 0, 18)
+    assert client.get(f"/api/rasters/{dem_id}/tiles/{far.z}/{far.x}/{far.y}.png").status_code == 204
+
+
+def test_tile_style_is_validated(client, dem_id):
+    assert client.get(f"/api/rasters/{dem_id}/tiles/18/0/0.png", params={"style": "neon"}).status_code == 422
+
+
+def test_tilejson(client, dem_id):
+    tj = client.get(f"/api/rasters/{dem_id}/tilejson.json", params={"style": "slope"}).json()
+    assert tj["tilejson"] == "3.0.0"
+    assert tj["tiles"][0].endswith("/{z}/{x}/{y}.png?style=slope")
+    assert tj["minzoom"] <= tj["maxzoom"]
+    assert tj["elevation_range"][1] > tj["elevation_range"][0]
