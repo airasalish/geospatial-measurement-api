@@ -130,6 +130,12 @@ export function EmptyState({ onSample, onBrowse, busy }: EmptyProps) {
           Try: 400 farm plots (SHP)
         </button>
       </div>
+      <p className="empty-hint">
+        No survey files on this device? Download a sample (
+        <a href="/samples/site_survey.kml" download>KML</a>,{" "}
+        <a href="/samples/farm_plots.zip" download>Shapefile</a> or{" "}
+        <a href="/samples/parcels_utm43n.zip" download>UTM Shapefile</a>) and drop it in.
+      </p>
       <div className="spec">
         <div>
           <b>~10⁻⁹</b>

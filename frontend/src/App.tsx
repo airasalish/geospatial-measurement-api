@@ -4,7 +4,7 @@ import { Inspector } from "./components/Inspector";
 import { Ledger } from "./components/Ledger";
 import { type FocusRequest, MapView } from "./components/MapView";
 import { EmptyState, MapControls, Readout } from "./components/Overlays";
-import { FileList, Logo, UploadZone, type UploadState } from "./components/Sidebar";
+import { FileList, Logo, SampleList, UploadZone, type UploadState } from "./components/Sidebar";
 import { baseName, downloadText, measurementsCsv } from "./exporters";
 import type { UnitSystem } from "./units";
 
@@ -207,7 +207,6 @@ export default function App() {
             upload={upload}
             error={error}
             onFile={(f) => void doUpload(f, f.name)}
-            onSample={(s) => void uploadSample(s)}
             onOpenFailed={(id) => {
               setError(null);
               void openFile(id);
@@ -215,10 +214,19 @@ export default function App() {
             onDismissError={() => setError(null)}
           />
         </div>
+        <div className="section">
+          <h2 className="section-label">
+            <span>
+              <b>02</b>Sample data
+            </span>
+            <span>no files? use these</span>
+          </h2>
+          <SampleList busy={!!upload} onOpen={(s) => void uploadSample(s)} />
+        </div>
         <div className="section files-section">
           <h2 className="section-label">
             <span>
-              <b>02</b>Files
+              <b>03</b>Files
             </span>
             <span>{files.length || ""}</span>
           </h2>

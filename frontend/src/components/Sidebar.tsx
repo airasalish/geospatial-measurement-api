@@ -2,10 +2,26 @@ import { useRef, useState } from "react";
 import type { ApiError, GeoFile } from "../api";
 import { formatBytes, timeAgo } from "../units";
 
+/** Files in /samples, served by the API. Open = upload now; download = try the upload flow yourself. */
 export const SAMPLES = [
-  { file: "site_survey.kml", title: "Site survey", detail: "KML · mixed geometry" },
-  { file: "farm_plots.zip", title: "Farm plots", detail: "Shapefile · 400+ parcels" },
-  { file: "parcels_utm43n.zip", title: "Parcels", detail: "Shapefile · UTM 43N" },
+  {
+    file: "site_survey.kml",
+    format: "KML",
+    title: "Site survey",
+    detail: "5 features · 1.4 KB",
+  },
+  {
+    file: "farm_plots.zip",
+    format: "SHP",
+    title: "Farm plots, Devanahalli",
+    detail: "442 features · 3 layers",
+  },
+  {
+    file: "parcels_utm43n.zip",
+    format: "SHP",
+    title: "Parcels in UTM 43N",
+    detail: "Projected CRS · 3 features",
+  },
 ] as const;
 
 export interface UploadState {
@@ -29,12 +45,11 @@ interface UploadProps {
   upload: UploadState | null;
   error: ApiError | null;
   onFile: (file: File) => void;
-  onSample: (file: string) => void;
   onOpenFailed: (id: string) => void;
   onDismissError: () => void;
 }
 
-export function UploadZone({ upload, error, onFile, onSample, onOpenFailed, onDismissError }: UploadProps) {
+export function UploadZone({ upload, error, onFile, onOpenFailed, onDismissError }: UploadProps) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const busy = upload !== null;
@@ -114,21 +129,43 @@ export function UploadZone({ upload, error, onFile, onSample, onOpenFailed, onDi
           </div>
         </div>
       )}
-      <div className="samples" aria-label="Sample files">
-        {SAMPLES.map((s) => (
-          <button
-            key={s.file}
-            type="button"
-            className="btn btn-sm"
-            disabled={busy}
-            onClick={() => onSample(s.file)}
-            title={s.detail}
-          >
-            {s.title}
-          </button>
-        ))}
-      </div>
     </>
+  );
+}
+
+export function SampleList({ busy, onOpen }: { busy: boolean; onOpen: (file: string) => void }) {
+  return (
+    <ul className="sample-list">
+      {SAMPLES.map((s) => (
+        <li key={s.file} className="sample">
+          <span className="fmt">{s.format}</span>
+          <span className="sname">{s.title}</span>
+          <span className="smeta">{s.detail}</span>
+          <span className="sactions">
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy}
+              onClick={() => onOpen(s.file)}
+              title="Upload and measure this file now"
+            >
+              Open
+            </button>
+            <a
+              className="icon-btn"
+              href={`/samples/${s.file}`}
+              download={s.file}
+              aria-label={`Download ${s.file}`}
+              title={`Download ${s.file}`}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </a>
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
