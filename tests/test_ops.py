@@ -100,7 +100,10 @@ def test_s3_gdal_environment_for_self_hosted_s3():
     assert env["AWS_S3_ENDPOINT"] == "s3:8333"
     assert env["AWS_HTTPS"] == "NO"
     assert env["AWS_VIRTUAL_HOSTING"] == "FALSE"
-    assert env["AWS_ACCESS_KEY_ID"] == "key"
+    # Credentials never go in GDAL options: rasterio requires them via AWSSession.
+    assert "AWS_ACCESS_KEY_ID" not in env
+    with s3.rasterio_env() as renv:
+        assert renv.session.credentials["aws_access_key_id"] == "key"
 
 
 # --------------------------------------------------------------------------

@@ -274,7 +274,7 @@ def tile(
             storage.gdal_path(record.storage_key),
             z, x, y, style,
             (record.z_min or 0.0, record.z_max or 1.0),
-            storage.gdal_env(),
+            storage.rasterio_env(),
         )  # fmt: skip
     if png is None:
         return Response(status_code=204)
@@ -294,7 +294,7 @@ def tilejson(
 ) -> dict[str, object]:
     record = rasters.get_raster(session, raster_id)
     assert record.storage_key
-    minzoom, maxzoom = tile_zoom_range(storage.gdal_path(record.storage_key), storage.gdal_env())
+    minzoom, maxzoom = tile_zoom_range(storage.gdal_path(record.storage_key), storage.rasterio_env())
     url = str(request.url_for("tile", raster_id=raster_id, z=0, x=0, y=0)).replace(
         "/0/0/0.png", "/{z}/{x}/{y}.png"
     )

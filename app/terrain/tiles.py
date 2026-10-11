@@ -14,7 +14,8 @@ A one-cell buffer around each tile keeps the gradients continuous across tile se
 """
 
 import math
-from typing import Literal
+from contextlib import AbstractContextManager
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -80,10 +81,13 @@ def render_tile(
     y: int,
     style: Style,
     z_range: tuple[float, float],
-    gdal_env: dict[str, str] | None = None,
+    env: AbstractContextManager[Any] | None = None,
 ) -> bytes | None:
-    """PNG bytes for tile z/x/y, or None when the tile is outside the DEM."""
-    with rasterio.Env(**(gdal_env or {})), Reader(path) as src:
+    """PNG bytes for tile z/x/y, or None when the tile is outside the DEM.
+
+    ``env`` is the storage's rasterio environment (S3 endpoint and credentials).
+    """
+    with env or rasterio.Env(), Reader(path) as src:
         if not src.tile_exists(x, y, z):
             return None
         try:
@@ -134,6 +138,6 @@ def render_tile(
     return render(data, mask, img_format="PNG")
 
 
-def tile_zoom_range(path: str, gdal_env: dict[str, str] | None = None) -> tuple[int, int]:
-    with rasterio.Env(**(gdal_env or {})), Reader(path) as src:
+def tile_zoom_range(path: str, env: AbstractContextManager[Any] | None = None) -> tuple[int, int]:
+    with env or rasterio.Env(), Reader(path) as src:
         return int(src.minzoom), int(src.maxzoom)

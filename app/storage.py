@@ -6,9 +6,11 @@ The service stores *keys*, never paths, so the backend can change:
 * ``S3Storage``: S3 or any S3-compatible store (SeaweedFS in docker-compose).
 
 Rasters are never downloaded to be read. ``gdal_path`` returns a path GDAL opens
-directly (a local path, or ``/vsis3/bucket/key``), and ``gdal_env`` gives the
-GDAL configuration for it. A COG on S3 is then read with HTTP range requests,
-fetching only the blocks a tile or polygon needs.
+directly (a local path, or ``/vsis3/bucket/key``), and ``rasterio_env()`` returns
+the matching rasterio environment: endpoint options for GDAL, plus credentials
+through rasterio's ``AWSSession``, since rasterio refuses AWS keys as plain GDAL
+options. A COG on S3 is then read with HTTP range requests, fetching only the
+blocks a tile or polygon needs.
 """
 
 import shutil
@@ -27,6 +29,7 @@ class Storage(Protocol):
     def download(self, key: str, local_path: Path) -> None: ...
     def gdal_path(self, key: str) -> str: ...
     def gdal_env(self) -> dict[str, str]: ...
+    def rasterio_env(self) -> Any: ...
     def local_path(self, key: str) -> Path | None: ...
     def delete(self, key: str) -> None: ...
     def check(self) -> None: ...
@@ -64,6 +67,11 @@ class LocalStorage:
 
     def gdal_env(self) -> dict[str, str]:
         return {}
+
+    def rasterio_env(self) -> Any:
+        import rasterio
+
+        return rasterio.Env()
 
     def local_path(self, key: str) -> Path | None:
         return self._path(key)
@@ -145,14 +153,22 @@ class S3Storage:
             "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",  # don't LIST the bucket on open
             "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.tiff",
         }
-        if self._access_key and self._secret_key:
-            env["AWS_ACCESS_KEY_ID"] = self._access_key
-            env["AWS_SECRET_ACCESS_KEY"] = self._secret_key
         if self.endpoint_url:
             parsed = urlparse(self.endpoint_url)
             env["AWS_S3_ENDPOINT"] = parsed.netloc
             env["AWS_HTTPS"] = "YES" if parsed.scheme == "https" else "NO"
         return env
+
+    def rasterio_env(self) -> Any:
+        import rasterio
+        from rasterio.session import AWSSession
+
+        session = AWSSession(
+            aws_access_key_id=self._access_key,
+            aws_secret_access_key=self._secret_key,
+            region_name=self.region,
+        )
+        return rasterio.Env(session=session, **self.gdal_env())
 
     def local_path(self, key: str) -> Path | None:
         return None

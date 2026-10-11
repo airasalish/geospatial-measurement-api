@@ -127,7 +127,7 @@ def get_raster(session: Session, raster_id: str, *, ready: bool = True) -> Raste
 def open_raster(storage: Storage, record: Raster) -> Iterator[rasterio.io.DatasetReader]:
     assert record.storage_key
     # The storage's GDAL settings make /vsis3/ paths readable (endpoint, credentials).
-    with rasterio.Env(**storage.gdal_env()), rasterio.open(storage.gdal_path(record.storage_key)) as ds:
+    with storage.rasterio_env(), rasterio.open(storage.gdal_path(record.storage_key)) as ds:
         yield ds
 
 
