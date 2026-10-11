@@ -40,7 +40,12 @@ POST /api/rasters/{id}/volume/       cut / fill / net, 3D area, slope inside a p
 POST /api/rasters/{id}/volumes/      the same for every polygon of a file (stockpile report)
 POST /api/rasters/{id}/profile/      elevation profile and grades along a line
 GET  /api/rasters/{id}/altitude/     elevation at a point
-GET  /api/rasters/{id}/tiles/{z}/{x}/{y}.png   elevation | hillshade | slope map tiles
+GET  /api/rasters/{id}/tiles/{z}/{x}/{y}.png   elevation | hillshade | slope | terrarium (3D)
+GET  /api/files/{id}/tiles/{z}/{x}/{y}.mvt     Mapbox Vector Tiles (ST_AsMVT on PostGIS)
+
+POST /api/auth/register · /api/auth/token · GET /api/auth/me      accounts (optional)
+GET|POST /api/projects/                                           sites / jobs per user
+GET  /health · /health/ready · /metrics                           liveness, readiness, Prometheus
 ```
 
 **Highlights**
@@ -65,9 +70,16 @@ GET  /api/rasters/{id}/tiles/{z}/{x}/{y}.png   elevation | hillshade | slope map
 - **DEM volumetrics.** Cut/fill against TIN, plane, flat or design bases, or against an
   earlier survey. True ground cell sizes in any CRS. Validated against analytic cone,
   frustum and pit volumes. See [Terrain and volumetrics](#terrain-and-volumetrics).
-- **Quality gates:** 147 backend tests at ~94% branch coverage, 16 frontend unit tests,
-  `mypy --strict`, strict TypeScript, `ruff`, and CI that builds the Docker image and
-  smoke-tests it end to end.
+- **3D terrain.** Terrarium-encoded elevation tiles drive MapLibre's 3D terrain, with
+  stockpiles, outlines and labels draped over the surface.
+- **Production-shaped.** Alembic migrations, PostGIS (GiST index, `ST_AsMVT`), Celery
+  workers on Redis, COGs on S3 read in place through GDAL `/vsis3/`, JWT auth with
+  per-user isolation, Prometheus metrics, readiness probes, JSON logs, and a
+  docker-compose stack. See [Operations](#operations).
+- **Quality gates:** 177 backend tests (~94% branch coverage) run on SQLite *and* on
+  PostGIS, an integration test through the real queue, worker and object storage, 16
+  frontend unit tests, `mypy --strict`, strict TypeScript and `ruff`. Six CI jobs on
+  every push.
 
 ---
 
@@ -76,6 +88,7 @@ GET  /api/rasters/{id}/tiles/{z}/{x}/{y}.png   elevation | hillshade | slope map
 - [Setup](#setup)
 - [Web UI](#web-ui)
 - [Terrain and volumetrics](#terrain-and-volumetrics)
+- [Operations](#operations)
 - [API](#api)
 - [Architecture](#architecture)
 - [CRS handling and measurement](#crs-handling-and-measurement)
@@ -122,8 +135,9 @@ The image is multi-stage: Node builds the UI, then a slim Python image serves th
 API and UI from one process.
 
 ```bash
-docker build -t field-ledger .
-docker run -p 8000:8000 -v geo-data:/srv/data field-ledger
+docker build -t traverse .
+docker run -p 8000:8000 -v geo-data:/srv/data traverse       # single container: SQLite, sync processing
+docker compose up --build                                     # full stack: PostGIS, Redis, worker, S3, Prometheus
 ```
 
 ### Deploy
@@ -148,6 +162,11 @@ in a `.env` file (see [`.env.example`](.env.example)).
 | `GEO_DEFAULT_PAGE_SIZE` / `GEO_MAX_PAGE_SIZE` | 100 / 1000 | Pagination |
 | `GEO_MAX_GEOJSON_FEATURES` | 100,000 | Cap for the map endpoint |
 | `GEO_CORS_ORIGINS` | *(none)* | Comma-separated origins, only needed if the UI is hosted elsewhere |
+| `GEO_MAX_RASTER_UPLOAD_BYTES` / `GEO_MAX_RASTER_PIXELS` | 500 MB / 250 M | DEM upload limits |
+| `GEO_STORAGE_BACKEND` | `local` | `local` (`GEO_STORAGE_DIR`) or `s3` (`GEO_S3_BUCKET`, `GEO_S3_ENDPOINT_URL`, keys) |
+| `GEO_TASK_MODE` | `sync` | `sync` (in the request) or `celery` (202 + worker; `GEO_REDIS_URL`) |
+| `GEO_AUTH_REQUIRED` | `false` | Require sign-in; needs `GEO_JWT_SECRET` (32+ bytes) |
+| `GEO_LOG_FORMAT` | `text` | `json` for log shippers |
 
 ---
 
@@ -267,6 +286,15 @@ What the table shows:
 
 ![Haul-road profile: elevation along the road, climb, descent and max sustained grade](docs/screenshots/terrain-profile.jpg)
 
+![3D terrain: the quarry yard with stockpiles, the pit and the haul road draped over the DEM (4x vertical exaggeration)](docs/screenshots/terrain-3d.jpg)
+
+**3D terrain** uses Terrarium-encoded tiles (`style=terrarium`, h = R·256 + G + B/256 − 32768)
+as a MapLibre `raster-dem` source. Heights are relative to the DEM minimum: outside the
+DEM MapLibre assumes 0 m, so absolute heights (~915 m here) would stand the site on a
+kilometre-high plinth. Tiles outside the DEM are served as flat 0 m tiles, never `204`:
+a raster-dem source can't decode an empty response, and failed DEM tiles stop MapLibre
+drawing the terrain at all. That bug blanked the whole map until I tracked it down.
+
 ### Ingestion
 
 Uploads must be single-band, north-up GeoTIFFs with a CRS. Imagery (3+ byte bands) and
@@ -276,6 +304,53 @@ averaged overviews). Analyses then read only the blocks under a polygon, and low
 tiles read overviews. Elevation statistics come from overviews, so a 250-million-cell
 DEM never loads fully into memory. Blobs live behind a small storage interface (`put`,
 `gdal_path`, `delete`) so they can move to S3.
+
+---
+
+## Operations
+
+The same image runs as a single container (the demo) or as a production-shaped stack.
+
+```text
+                  ┌──────────────────────────────────────┐
+  browser ──────► │ api  (FastAPI + built UI, uvicorn)   │── /metrics ◄── prometheus
+                  │  • uploads → 202, raw file → S3      │
+                  │  • analyses, tiles: read COGs in     │
+                  │    place via GDAL /vsis3/ (ranges)   │
+                  └───────┬───────────────┬──────────────┘
+                          │ enqueue       │ SQL (PostGIS: GiST, ST_AsMVT)
+                          ▼               ▼
+                       redis ◄──── worker (Celery, same code as sync mode)
+                                          │ parse, measure, COG-convert
+                                          ▼
+                                 S3-compatible storage (SeaweedFS locally, S3 in prod)
+```
+
+| Concern | How |
+|---|---|
+| **Schema** | Alembic migrations, applied at API startup. A test runs autogenerate against the models and fails on any drift. PostGIS-only DDL (extension, `geom` column, GiST index) is dialect-guarded |
+| **Processing** | `GEO_TASK_MODE=celery`: the API stores the upload, creates the record (`PROCESSING`) and returns **202** with `Location`. The worker runs the *same* ingestion code as sync mode. Late acks + `prefetch=1`: a crashed worker's task is retried, not lost, and long DEM jobs don't queue behind each other |
+| **Storage** | Keys, not paths. COGs on S3 are opened as `/vsis3/bucket/key`; endpoint settings go to GDAL, credentials via rasterio's `AWSSession`. Downloads are SigV4 presigned redirects |
+| **Auth** | Off by default. With `GEO_AUTH_REQUIRED=true`: scrypt password hashes, HS256 JWTs, every file, DEM, analysis and tile scoped to its owner (others' ids return 404), optional projects. Refuses to start with a default or short secret |
+| **Health** | `/health` (liveness) and `/health/ready` (database, storage, queue), returning **503** with per-check status when degraded |
+| **Metrics** | Prometheus: request rate and latency by *route template* (bounded cardinality), uploads by kind and status, processing and terrain-analysis latency histograms |
+| **Logs** | `GEO_LOG_FORMAT=json`: one JSON object per line |
+
+**docker-compose:** `docker compose up --build` starts the API (UI and docs on :8000),
+the worker, PostGIS, Redis, S3 (SeaweedFS on :8333) and Prometheus (:9090). Startup is
+health-gated: the API waits for its dependencies, and the worker waits for the API so
+migrations run first. The worker's healthcheck pings it over the broker, because the
+image's default probe is HTTP and a worker serves none.
+
+**CI** (GitHub Actions, every push):
+
+| Job | What it proves |
+|---|---|
+| `backend` (3.12, 3.13) | ruff, `mypy --strict`, 177 tests on SQLite, coverage ≥ 90% |
+| `postgis` | The same suite against `postgis/postgis`: migrations, GiST index, `ST_AsMVT` |
+| `frontend` | strict TypeScript, unit tests, production build |
+| `compose` | Boots `docker-compose.yml`, checks readiness, pushes uploads through Redis, the containerised worker and S3, and checks Prometheus scrapes the API |
+| `docker` | Builds the single-container image and smoke-tests the UI and an upload |
 
 ---
 
@@ -444,33 +519,41 @@ the source's own identifier when there is one (KML `<Placemark id>`).
 
 ```text
 app/
-├── main.py              App factory, error handler, /health, serves the built UI
-├── config.py            Settings from environment variables (pydantic-settings)
-├── db.py                Engine/session; SQLite pragmas (WAL, foreign keys)
-├── models.py            ORM: UploadedFile 1──* Feature
+├── main.py              App factory: routers, error handler, health/ready, metrics, UI mount
+├── config.py            Settings from GEO_* environment variables
+├── db.py                Engine/session, SQLite pragmas, Alembic migrate()
+├── models.py            UploadedFile 1──* Feature, Raster, User, Project
 ├── schemas.py           Pydantic response models (the public contract)
-├── errors.py            Domain errors -> HTTP status codes
-├── api/files.py         HTTP layer: validation, streaming upload, pagination
+├── auth.py              scrypt hashing, JWTs, user dependencies, tenancy helpers
+├── storage.py           LocalStorage / S3Storage (+ GDAL /vsis3/ environment)
+├── metrics.py           Prometheus metrics + HTTP middleware
+├── worker.py            Celery app and tasks (same ingestion code as sync mode)
+├── api/                 files, rasters (terrain), auth + projects
 ├── services/
-│   ├── ingestion.py     Pipeline: read -> measure -> persist (no HTTP code here)
-│   └── queries.py       Read side; summaries aggregated in SQL
-└── geo/                 Pure geospatial logic (no web or DB code)
-    ├── types.py         RawFeature / Layer / Dataset (format-agnostic)
-    ├── archive.py       SafeZip: in-memory, size-capped zip access
-    ├── readers/         Format detection + Shapefile, KML/KMZ readers
-    ├── crs.py           CRS description, reprojection, densification, local projections
-    └── measure.py       Vectorised batch measurement
+│   ├── ingestion.py     Vector pipeline: read -> measure -> persist
+│   ├── rasters.py       DEM lifecycle, geometry resolution
+│   ├── queries.py       Read side; summaries aggregated in SQL
+│   └── vector_tiles.py  MVT: ST_AsMVT on PostGIS, Python encoder on SQLite
+├── geo/                 Pure vector geodesy (no web or DB code)
+│   ├── archive.py · readers/ · crs.py · measure.py · types.py
+└── terrain/             Pure DEM analytics (no web or DB code)
+    ├── grid.py          True ground cell sizes in any CRS
+    ├── ingest.py        Validation + Cloud-Optimised GeoTIFF conversion
+    ├── analysis.py      Volumes, surface area, slope, profiles, altitude
+    └── tiles.py         Elevation / hillshade / slope / terrarium tiles
 
+migrations/              Alembic (0001 schema + PostGIS, 0002 users/projects)
 frontend/                React 18 + TypeScript (strict) + MapLibre GL, built with Vite
-├── src/api.ts           Typed client mirroring app/schemas.py (XHR upload progress)
-├── src/units.ts         Unit conversion and formatting (unit-tested)
-├── src/components/      MapView, Ledger (virtualised), Inspector, Overlays, Sidebar
+├── src/api.ts · auth.ts Typed client, token handling
+├── src/components/      MapView, Ledger, Inspector, Terrain (volume, profile, report), Account
 └── src/styles.css       Design tokens and components, no CSS framework
+deploy/                  Prometheus scrape config, S3 identities for compose
 ```
 
-The layers depend in one direction only: `api -> services -> geo`. The `geo`
-package knows nothing about HTTP or the database, so it is unit-tested directly
-and could be reused in a worker or CLI unchanged.
+The layers depend in one direction only: `api -> services -> geo | terrain`. The
+`geo` and `terrain` packages know nothing about HTTP or the database, so they are
+tested directly against analytic ground truth, and the Celery worker reuses them
+unchanged.
 
 ### File-processing flow
 
@@ -593,12 +676,14 @@ it shifts the AEQD centre by at most ~8 km (error under 1e-6).
 |---|---|---|
 | **FastAPI** | Typed request/response models produce the OpenAPI docs for free. Async upload streaming. Light weight for a single-resource service. | Django + DRF: better admin and ORM migrations, but heavier than this scope needs. |
 | **pyshp + defusedxml + shapely + pyproj** instead of GDAL/Fiona/GeoPandas | Pure wheels: `pip install` works on Windows, macOS and slim Docker with no system GDAL. Full control over error handling, so one bad feature never sinks the file. | GeoPandas + pyogrio: faster reading and more formats, but a ~100 MB native dependency, and less control when a single feature is malformed. Would revisit for very large files. |
-| **Process synchronously in the request** (in a thread pool) | Simple, deterministic, and the client gets results immediately. Files are capped (50 MB, 250k features). `status` and the service layer are already built for async. | Background worker (Celery/RQ/arq) with `PROCESSING` -> poll. This is the next step for larger files. `ingest_upload` has no HTTP dependencies, so moving it is a small change. |
+| **Two processing modes, one code path**: `sync` (in the request) and `celery` (202 + worker) | Sync keeps the demo a single container with immediate results. Celery handles large files and DEM conversion without tying up API workers. Both call the same `process_record` / `process_raster_record`, so behaviour can't diverge | Async-only (always queue): needs Redis even for the demo. FastAPI `BackgroundTasks`: no retries, and lost on restart |
 | **Measure at upload time, store results** | Reads (`GET .../measurements/`) are pure DB queries, cheap and paginated. Summaries are SQL aggregates. | Compute on every GET: no storage, but repeated CPU work on every read. |
-| **SQLite (WAL) + SQLAlchemy 2.0**, geometry stored as GeoJSON text | No setup. WAL lets reads run during writes. Swap `GEO_DATABASE_URL` for PostgreSQL. | PostGIS: spatial indexes and queries. Worth it once spatial filtering is needed (see Future scope). |
+| **SQLite or PostgreSQL/PostGIS** behind one model; geometry stored as GeoJSON text plus bbox columns, and a native PostGIS `geom` column on Postgres | The demo runs with no database server; production gets GiST-indexed geometry and `ST_AsMVT`. Portable bbox columns keep spatial filtering and vector tiles working on both | GeoAlchemy2 geometry types in the ORM: ties the models to PostGIS and loses the zero-setup mode |
 | **Per-feature status instead of failing the whole file** | Real survey data is messy: one bad Placemark shouldn't hide 10,000 good ones. | All-or-nothing validation: simpler, but hostile to users. |
 | **Record failed uploads** (`status: FAILED`) | Gives an audit trail and a clear error to look up later. The 422 response includes `file_id`. | Return an error and keep nothing. |
 | **Feature `index` as the public ID** | Always present, stable, unique within a file. The source ID (`source_id`) is optional and not guaranteed unique. | Global surrogate keys: they leak the DB's internals into the API. |
+| **S3 + COGs read in place** (`/vsis3/`) | Tiles and analyses fetch only the blocks they need through HTTP range requests; nothing is copied to local disk | Download-then-read: simpler, but slow and disk-hungry for large DEMs |
+| **Auth off by default, strict when on** | The public demo stays one-click; multi-tenant deployments get 404-not-403 isolation and refuse weak secrets | Always-on auth: a demo nobody can try without signing up |
 | **Return geometry in the source CRS** | Lossless: exactly what the user uploaded. The CRS is reported next to it. | Always reproject to WGS84 GeoJSON (RFC 7946). It could be added as a `?crs=` option. |
 | **Refuse to guess projected coordinates without a CRS** | A silently wrong area is the worst outcome for a measurement API. | Default to some CRS: gives plausible-looking but wrong numbers. |
 
@@ -646,25 +731,29 @@ The remaining time is mostly the pure-Python Shapefile reader. See Future scope.
 ## Testing
 
 ```bash
-pytest                       # 104 tests
-pytest --cov                 # ~95% branch coverage
-ruff check . && ruff format --check .
-mypy app                     # strict mode
+pytest                                   # 177 tests on SQLite (~94% branch coverage)
+GEO_TEST_DATABASE_URL=postgresql+psycopg://... pytest   # the same suite on PostGIS
+GEO_INTEGRATION=1 pytest -m integration  # against `docker compose up` (real worker, Redis, S3)
+ruff check . && ruff format --check . && mypy app
 
-npm --prefix frontend test           # 11 unit tests (units, CSV export, bounds)
-npm --prefix frontend run typecheck  # strict TypeScript
+npm --prefix frontend test               # 16 unit tests
+npm --prefix frontend run typecheck
 ```
 
 | Suite | What it covers |
 |---|---|
-| `tests/test_measure.py` | **Accuracy against geodesic ground truth** at the equator, high latitude, the southern hemisphere, the prime meridian, UTM zone edges and >84°N. Holes, multipolygons, 3D input, projected source CRSs (UTM, Web Mercator), non-WGS84 datums, invalid geometry repair, all non-measurable cases. |
-| `tests/test_readers.py` | KML namespaces, folders, ExtendedData/SchemaData, both hole encodings, MultiGeometry collapse, malformed features, XXE, entity expansion, deep nesting, KMZ. Shapefile multi-layer, nested folders, `.cpg`, missing `.prj`/`.dbf`/`.shx`, NULL shapes, ring orientation. Zip bombs, corrupt archives, content sniffing. |
-| `tests/test_api.py` | Every endpoint end to end: status codes, `Location` header, pagination and caps, filters, error shapes, FAILED records, transaction rollback on mid-file failure, cascade delete. GeoJSON streaming (reprojection from UTM, `null` for unplaceable geometry, truncation), file bbox, CORS, and the UI mount not shadowing API routes or slash redirects. |
-| `frontend/src/*.test.ts` | Unit formatting and auto-scaling, PROJ-string parsing, CSV quoting and the formula-injection guard, geometry bounds. |
+| `tests/test_measure.py` | **Accuracy against geodesic ground truth** at the equator, high latitude, the southern hemisphere, UTM zone edges and >84°N. Holes, multipolygons, 3D input, projected CRSs (UTM, Web Mercator), non-WGS84 datums, invalid-geometry repair |
+| `tests/test_readers.py` | KML namespaces, folders, ExtendedData, hole encodings, MultiGeometry, XXE, entity expansion, deep nesting, KMZ. Shapefile layers, folders, `.cpg`, missing parts, NULL shapes. Zip bombs, corrupt archives, content sniffing |
+| `tests/test_terrain.py` | **Volumes against analytic cones, pits and frusta**: every base surface, sloped ground, survey-to-survey difference, a geographic vs a projected DEM, the UTM scale correction, 3D area and slope on a 45° plane, nodata, profiles, COG layout and overviews, all tile styles, terrarium decoding |
+| `tests/test_spatial.py` | bbox filtering and Mapbox Vector Tiles (decoded and checked), PostGIS geometry and index |
+| `tests/test_auth.py` | Registration, tokens (expired, forged), 401s, **tenant isolation** for files, DEMs, feature references and comparison surfaces, projects, query-token tiles, secret checks |
+| `tests/test_ops.py` | Celery mode (202, polling, worker-recorded failures), readiness and 503s, metrics labels, storage key safety, the S3 GDAL environment, and the full-stack integration test |
+| `tests/test_api.py` | Every vector endpoint end to end, GeoJSON streaming, CORS, UI mount routing, and **migrations vs models drift** |
+| `frontend/src/*.test.ts` | Units, PROJ parsing, CSV quoting and formula-injection guard, bounds, sphere estimates, sketch KML |
 
-The test inputs are built in code (`tests/factories.py`), not stored as binary
-fixtures, so every test shows exactly what it feeds in. `python -m scripts.make_samples`
-regenerates `samples/`.
+Test inputs are built in code (`tests/factories.py`), not stored as binary fixtures.
+`python -m scripts.make_samples` and `python -m scripts.make_dem_samples` regenerate
+`samples/` byte-for-byte.
 
 ---
 
@@ -685,27 +774,31 @@ regenerates `samples/`.
   feature, and the ORM insert path cost more than all the geometry work.
 - **Real files are messy.** `__MACOSX` folders, upper-case `.PRJ`, unclosed KML
   rings and `lon, lat` with spaces all came up while writing tests.
+- **Volumes are limited by the base, not the arithmetic.** With analytic ground truth
+  the integration is exact. What one survey can't know is the ground under a pile.
+  Comparing two surveys removes that error (0.05% vs up to 4.7%), which is why mines
+  fly the same site repeatedly.
+- **Infrastructure fails in the seams.** Every bug in the compose stack was an
+  interface: a wheel needing a system library (`libexpat1`), a worker inheriting an
+  HTTP healthcheck, rasterio refusing AWS keys as GDAL options, SigV2 vs SigV4
+  presigning, MinIO's public images disappearing, and a 204 tile silently blanking 3D
+  terrain. Running the real stack in CI is what caught them.
 
 ## Future scope
 
-- **Background processing.** Move `ingest_upload` to a worker queue (arq/Celery +
-  Redis), return `202 Accepted` with `PROCESSING`, and add progress reporting. Keep
-  sync mode for small files.
-- **PostGIS.** Native geometry columns, a spatial index, and endpoints such as
-  `?bbox=` filtering and "features within polygon".
-- **More formats.** GeoJSON, GeoPackage, DXF. A GDAL-backed reader (pyogrio) for
-  high-volume ingestion: the reader is now the bottleneck.
-- **Output options.** Server-side CSV/GeoPackage export and arbitrary `?crs=` output
-  reprojection. WGS84 GeoJSON and client-side CSV already exist.
-- **UI.** Vector tiles from PostGIS for million-feature files, drawing and editing
-  geometry, and comparing two uploads.
-- **3D / terrain.** Surface (slope-aware) area and 3D length using the Z values that
-  drone surveys provide, or a DEM.
-- **Antimeridian-crossing features.** Split geometries at ±180° before measuring.
-- **Duplicate-upload detection.** `sha256` is already stored, so an identical file could
-  return the existing result.
-- **Operations.** Alembic migrations, authentication with per-tenant isolation,
-  object storage for raw uploads, structured logging, metrics.
+- **Orthomosaics and point clouds.** Serve RGB orthos from COGs next to the DEMs, and
+  point clouds or meshes as 3D Tiles (Cesium), as a drone platform needs.
+- **Contours and change heatmaps.** Contour lines from DEMs, and DEM-of-difference
+  rasters coloured by cut/fill between surveys.
+- **Design surfaces.** Compare against a design TIN (LandXML) as well as a DEM, for
+  plan-versus-actual on earthworks.
+- **More vector formats.** GeoJSON, GeoPackage, DXF, with a GDAL (pyogrio) reader for
+  high-volume ingestion (the pure-Python Shapefile reader is the bottleneck).
+- **Progress and retries in the UI** for long Celery jobs (task state in Redis), and
+  idempotent re-uploads keyed by the stored `sha256`.
+- **Deployment.** A Helm chart with separate API and worker autoscaling, OpenTelemetry
+  tracing across API → queue → worker, and S3 lifecycle rules for raw uploads.
+- **Antimeridian-crossing features.** Split at ±180° before measuring.
 
 ## License
 
