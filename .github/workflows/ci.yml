@@ -58,6 +58,7 @@ jobs:
       - name: Smoke test
         run: |
           docker run -d --name geo -p 8000:8000 geo-api
-          for i in $(seq 1 30); do curl -fs localhost:8000/health && break; sleep 1; done
+          for i in $(seq 1 60); do curl -fs localhost:8000/health && break; sleep 1; done
+          curl -fs localhost:8000/health || { docker logs geo; exit 1; }
           curl -fs localhost:8000/ | grep -q "<title>Traverse"
           curl -fs -F "file=@samples/site_survey.kml" localhost:8000/api/files/ | tee /dev/stderr | grep -q '"status":"COMPLETED"'
