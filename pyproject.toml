@@ -38,7 +38,10 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
-filterwarnings = ["ignore::DeprecationWarning:starlette.*", "ignore:Using `httpx`:DeprecationWarning"]
+filterwarnings = [
+    # Starlette nudges towards httpx2 for TestClient; httpx works and is the stable choice for now.
+    "ignore:Using .httpx. with .starlette.testclient. is deprecated",
+]
 
 [tool.coverage.run]
 source = ["app"]
