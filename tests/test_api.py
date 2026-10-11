@@ -219,3 +219,134 @@ def test_list_and_delete(client):
 
 def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}
+
+
+# ------------------------------------------------------------------ map support
+
+
+def test_geojson_feature_collection_in_wgs84(client):
+    file_id = upload(client, "survey.kml", mixed_kml()).json()["id"]
+    r = client.get(f"/api/files/{file_id}/geojson/")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/geo+json")
+    assert r.headers["x-total-count"] == "4"
+    assert r.headers["x-truncated"] == "false"
+    fc = r.json()
+    assert fc["type"] == "FeatureCollection"
+    poly, line, point, model = fc["features"]
+    assert poly["id"] == 0
+    assert poly["geometry"]["type"] == "Polygon"
+    assert poly["properties"]["name"] == "plot"
+    assert poly["properties"]["status"] == "MEASURED"
+    assert poly["properties"]["area_m2"] > 1_000_000
+    assert line["properties"]["length_m"] > 1500
+    assert point["geometry"]["coordinates"] == [77.595, 12.975]
+    assert model["geometry"] is None
+    assert model["properties"]["status"] == "UNSUPPORTED"
+
+
+def test_geojson_reprojects_projected_source(client):
+    sq = [[(500_000, 1_430_000), (500_000, 1_431_000), (501_000, 1_431_000), (501_000, 1_430_000),
+           (500_000, 1_430_000)]]  # fmt: skip
+    data = f.shapefile_zip(shape_type=shapefile.POLYGON, geometries=[sq], epsg=32643)
+    body = upload(client, "utm.zip", data).json()
+    # UTM 43N, false easting 500 km -> central meridian 75E; northing 1430 km -> ~12.9N.
+    min_lon, min_lat, max_lon, max_lat = body["bbox"]
+    assert 74.99 < min_lon < max_lon < 75.02
+    assert 12.9 < min_lat < max_lat < 13.0
+    (feature,) = client.get(f"/api/files/{body['id']}/geojson/").json()["features"]
+    lon, lat = feature["geometry"]["coordinates"][0][0]
+    assert 74.99 < lon < 75.02
+    assert 12.9 < lat < 13.0
+
+
+def test_geojson_omits_geometry_that_cannot_be_placed(client):
+    data = f.shapefile_zip(
+        shape_type=shapefile.POLYGON,
+        geometries=[[[(5e5, 1e6), (5e5, 2e6), (6e5, 2e6), (5e5, 1e6)]]],
+        epsg=None,
+    )
+    body = upload(client, "nocrs.zip", data).json()
+    assert body["bbox"] is None
+    (feature,) = client.get(f"/api/files/{body['id']}/geojson/").json()["features"]
+    assert feature["geometry"] is None
+    assert feature["properties"]["status"] == "FAILED"
+
+
+def test_geojson_limit_and_truncation(client, settings: Settings):
+    settings.max_geojson_features = 3
+    file_id = upload(client, "survey.kml", mixed_kml()).json()["id"]
+    r = client.get(f"/api/files/{file_id}/geojson/", params={"limit": 100})
+    assert len(r.json()["features"]) == 3
+    assert r.headers["x-truncated"] == "true"
+    assert len(client.get(f"/api/files/{file_id}/geojson/", params={"limit": 2}).json()["features"]) == 2
+
+
+def test_file_bbox_for_kml(client):
+    body = upload(client, "survey.kml", mixed_kml()).json()
+    assert body["bbox"] == [77.59, 12.97, 77.6, 12.98]
+
+
+def test_samples_are_served(client):
+    r = client.get("/samples/site_survey.kml")
+    assert r.status_code == 200
+    assert b"<kml" in r.content
+
+
+def test_cors_is_off_by_default(client):
+    r = client.get("/health", headers={"Origin": "https://example.com"})
+    assert "access-control-allow-origin" not in r.headers
+
+
+def test_cors_allows_configured_origin(settings: Settings):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    settings.cors_origins = "https://ui.example.com"
+    with TestClient(create_app(settings)) as c:
+        r = c.get("/health", headers={"Origin": "https://ui.example.com"})
+        assert r.headers["access-control-allow-origin"] == "https://ui.example.com"
+
+
+def test_frontend_is_served_when_built(tmp_path, settings: Settings):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "index.html").write_text("<!doctype html><title>ui</title>")
+    settings.frontend_dir = str(tmp_path / "dist")
+    with TestClient(create_app(settings)) as c:
+        assert "<title>ui</title>" in c.get("/").text
+        assert c.get("/health").json() == {"status": "ok"}  # API routes still win
+        assert c.get("/api/files/").status_code == 200
+        # The catch-all UI mount must not break trailing-slash redirects or API 404s.
+        file_id = c.post("/api/files/", files={"file": ("a.kml", mixed_kml())}).json()["id"]
+        assert c.get(f"/api/files/{file_id}").status_code == 200
+        r = c.get("/api/nope/")
+        assert r.status_code == 404
+        assert r.headers["content-type"] == "application/json"
+
+
+def test_timestamps_are_utc(client):
+    body = upload(client, "survey.kml", mixed_kml()).json()
+    fetched = client.get(f"/api/files/{body['id']}/").json()
+    assert fetched["created_at"].endswith("Z") or fetched["created_at"].endswith("+00:00")
+
+
+@pytest.mark.parametrize(
+    ("props", "expected"),
+    [
+        ({"Name": "Plot A", "plot_no": "P1"}, "Plot A"),
+        ({"plot_no": "DVH-0101", "crop": "Ragi"}, "DVH-0101"),
+        ({"well_id": 7}, "7"),
+        ({"crop": "Ragi"}, None),
+        ({"name": "  "}, None),
+        (None, None),
+    ],
+)
+def test_display_name(props, expected):
+    from app.services.queries import display_name
+
+    assert display_name(props) == expected

@@ -27,6 +27,7 @@ import numpy as np
 import numpy.typing as npt
 import shapely
 from pyproj import CRS, Geod, Transformer
+from pyproj.exceptions import ProjError
 from shapely.geometry import GeometryCollection, LineString, MultiLineString, MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 
@@ -79,6 +80,33 @@ def to_wgs84(geoms: GeometryArray, crs: CRS) -> GeometryArray:
         result: GeometryArray = shapely.force_2d(geoms)
         return result
     return _transform(geoms, _to_wgs84_transformer(crs.to_wkt()))
+
+
+def to_wgs84_for_display(geoms: GeometryArray, crs: CRS | None) -> GeometryArray:
+    """WGS84 copies of ``geoms`` for web maps, or None where that can't be done safely.
+
+    Unlike measurement, this never raises: geometries with no CRS that don't look
+    like lon/lat, failed reprojections and non-finite results all become None.
+    """
+    present = np.array([g is not None and not g.is_empty for g in geoms], dtype=bool)
+    out: GeometryArray = np.full(len(geoms), None, dtype=object)
+    if not present.any():
+        return out
+    subset = geoms[present]
+    if crs is None:
+        keep = np.array([looks_geographic(g) for g in subset], dtype=bool)
+        projected = np.full(len(subset), None, dtype=object)
+        projected[keep] = shapely.force_2d(subset[keep])
+    else:
+        try:
+            projected = to_wgs84(subset, crs)
+        except ProjError:
+            return out
+    bounds = shapely.bounds(projected)
+    finite = np.isfinite(bounds).all(axis=1)
+    projected[~finite] = None
+    out[present] = projected
+    return out
 
 
 # ------------------------------------------------------------------ densification

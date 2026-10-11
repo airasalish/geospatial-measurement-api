@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.errors import GeoAPIError, InvalidGeoFile
 from app.geo.archive import ArchiveLimits
-from app.geo.crs import describe_crs
+from app.geo.crs import describe_crs, to_wgs84_for_display
 from app.geo.measure import measure_batch
 from app.geo.readers import check_extension, read_dataset
 from app.geo.types import Dataset, RawFeature
@@ -97,6 +97,7 @@ def _persist_features(session: Session, settings: Settings, record: UploadedFile
     crs_labels: set[str | None] = set()
     layer_names: dict[str, None] = {}  # ordered set
     warnings: list[str] = []
+    extent = _Extent()
 
     for layer in dataset.layers:
         crs_label = describe_crs(layer.crs)
@@ -107,7 +108,8 @@ def _persist_features(session: Session, settings: Settings, record: UploadedFile
             if index + len(batch) > settings.max_features:
                 raise InvalidGeoFile(f"File has more than {settings.max_features} features.")
             # Core executemany: skips per-row ORM bookkeeping (~3x faster than ORM bulk insert).
-            session.execute(FEATURES.insert(), _rows(record.id, index, crs_label, batch, layer.crs))
+            rows = _rows(record.id, index, crs_label, batch, layer.crs, extent)
+            session.execute(FEATURES.insert(), rows)
             index += len(batch)
             layer_names.update((raw.layer, None) for raw in batch if raw.layer)
         warnings.extend(layer.warnings)
@@ -120,14 +122,46 @@ def _persist_features(session: Session, settings: Settings, record: UploadedFile
     record.crs = crs_labels.pop() if len(crs_labels) == 1 else ("MIXED" if crs_labels else None)
     record.layers = list(layer_names)
     record.warnings = warnings
+    record.bbox = extent.as_list()
+
+
+class _Extent:
+    """Running WGS84 bounding box across batches."""
+
+    def __init__(self) -> None:
+        self.bounds: np.ndarray | None = None
+
+    def add(self, geoms: np.ndarray) -> None:
+        b = shapely.bounds(geoms)  # None/empty -> NaN rows, dropped next
+        b = b[np.isfinite(b).all(axis=1)]
+        if not len(b):
+            return
+        batch = np.array([b[:, 0].min(), b[:, 1].min(), b[:, 2].max(), b[:, 3].max()])
+        if self.bounds is None:
+            self.bounds = batch
+        else:
+            self.bounds = np.concatenate([np.minimum(self.bounds[:2], batch[:2]),
+                                          np.maximum(self.bounds[2:], batch[2:])])  # fmt: skip
+
+    def as_list(self) -> list[float] | None:
+        return None if self.bounds is None else [round(float(v), 7) for v in self.bounds]
 
 
 def _rows(
-    file_id: str, start: int, crs_label: str | None, batch: tuple[RawFeature, ...], crs: CRS | None
+    file_id: str,
+    start: int,
+    crs_label: str | None,
+    batch: tuple[RawFeature, ...],
+    crs: CRS | None,
+    extent: _Extent,
 ) -> list[dict[str, Any]]:
     measurements = measure_batch(batch, crs)
-    # One vectorised GeoJSON encode for the batch (much faster than per-feature mapping()).
-    geojson = shapely.to_geojson(np.asarray([raw.geometry for raw in batch], dtype=object))
+    geoms = np.asarray([raw.geometry for raw in batch], dtype=object)
+    display = to_wgs84_for_display(geoms, crs)
+    extent.add(display)
+    # Vectorised GeoJSON encoding for the whole batch (much faster than per-feature mapping()).
+    geojson = shapely.to_geojson(geoms)
+    geojson_wgs84 = shapely.to_geojson(display)
     return [
         {
             "file_id": file_id,
@@ -136,6 +170,7 @@ def _rows(
             "layer": raw.layer,
             "geometry_type": raw.geometry.geom_type if raw.geometry is not None else raw.declared_type,
             "geometry": gj,
+            "geometry_wgs84": gj84,
             "crs": crs_label,
             "properties": raw.properties,
             "measurement_status": m.status,
@@ -145,7 +180,9 @@ def _rows(
             "measurement_crs": m.crs,
             "measurement_note": m.note,
         }
-        for offset, (raw, m, gj) in enumerate(zip(batch, measurements, geojson, strict=True))
+        for offset, (raw, m, gj, gj84) in enumerate(
+            zip(batch, measurements, geojson, geojson_wgs84, strict=True)
+        )
     ]
 
 

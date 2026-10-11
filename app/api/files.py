@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -139,6 +140,34 @@ def list_features(
     return Page[FeatureOut](
         total=total, limit=limit, offset=offset, items=[FeatureOut.model_validate(r) for r in rows]
     )
+
+
+@router.get(
+    "/{file_id}/geojson/",
+    responses={**_errors, 200: {"content": {"application/geo+json": {}}}},
+    response_class=StreamingResponse,
+    summary="All features as a WGS84 GeoJSON FeatureCollection (for web maps)",
+)
+def get_geojson(
+    file_id: str,
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    limit: Annotated[int | None, Query(ge=1, description="Max features (capped by server).")] = None,
+) -> StreamingResponse:
+    record = queries.get_file(session, file_id)
+    cap = min(limit or settings.max_geojson_features, settings.max_geojson_features)
+    headers = {
+        "X-Total-Count": str(record.feature_count),
+        "X-Truncated": str(record.feature_count > cap).lower(),
+    }
+
+    def stream() -> Iterator[str]:
+        # The response outlives this request's session, so the stream opens its own.
+        with request.app.state.db.session_factory() as stream_session:
+            yield from queries.geojson_chunks(stream_session, file_id, cap)
+
+    return StreamingResponse(stream(), media_type="application/geo+json", headers=headers)
 
 
 @router.get(

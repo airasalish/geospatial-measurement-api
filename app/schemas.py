@@ -1,7 +1,7 @@
 """API response models (the public contract, kept separate from the ORM models)."""
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -22,10 +22,17 @@ class FileOut(BaseModel):
     crs: str | None = Field(description="Source CRS, e.g. 'EPSG:4326'. 'MIXED' if layers differ.")
     feature_count: int
     layers: list[str]
+    bbox: list[float] | None = Field(description="WGS84 extent [min_lon, min_lat, max_lon, max_lat].")
     warnings: list[str]
     processing_ms: float | None
     created_at: datetime
     processed_at: datetime | None
+
+    @field_validator("created_at", "processed_at")
+    @classmethod
+    def _assume_utc(cls, value: datetime | None) -> datetime | None:
+        # SQLite drops tzinfo on the way back; timestamps are always written in UTC.
+        return value.replace(tzinfo=UTC) if value is not None and value.tzinfo is None else value
 
 
 class Page[T](BaseModel):

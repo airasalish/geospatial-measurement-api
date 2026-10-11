@@ -56,6 +56,8 @@ class UploadedFile(Base):
     crs: Mapped[str | None] = mapped_column(String(64), default=None)
     feature_count: Mapped[int] = mapped_column(Integer, default=0)
     layers: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # WGS84 extent of all mappable features: [min_lon, min_lat, max_lon, max_lat].
+    bbox: Mapped[list[float] | None] = mapped_column(JSON, default=None)
     warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
     processing_ms: Mapped[float | None] = mapped_column(Float, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -81,6 +83,8 @@ class Feature(Base):
     # GeoJSON geometry in the *source* CRS, stored as text: it is produced as a string
     # by shapely's vectorised encoder and only parsed when served.
     geometry: Mapped[str | None] = mapped_column(Text, default=None)
+    # The same geometry in WGS84 for web maps (None if it can't be placed on Earth).
+    geometry_wgs84: Mapped[str | None] = mapped_column(Text, default=None)
     crs: Mapped[str | None] = mapped_column(String(64), default=None)
     properties: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 

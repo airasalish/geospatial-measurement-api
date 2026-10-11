@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     # Pagination defaults for list endpoints.
     default_page_size: int = 100
     max_page_size: int = 1_000
+    # Cap for the map endpoint, which returns a whole file in one response.
+    max_geojson_features: int = 100_000
+
+    # Comma-separated origins allowed to call the API from a browser, e.g. a separately
+    # hosted frontend. The bundled UI is served same-origin and needs none.
+    cors_origins: str = ""
+    # Directory with the built frontend (frontend/dist). Served at / when it exists.
+    frontend_dir: str = "frontend/dist"
+    samples_dir: str = "samples"
 
 
 @lru_cache
