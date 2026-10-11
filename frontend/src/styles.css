@@ -1903,3 +1903,10 @@ button {
   background: #fff;
   font: 13px var(--sans);
 }
+
+.view3d {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+}

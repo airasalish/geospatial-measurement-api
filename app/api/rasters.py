@@ -36,7 +36,7 @@ from app.schemas import (
 from app.services import queries, rasters
 from app.storage import S3Storage, Storage
 from app.terrain.analysis import TerrainError, compute_profile, compute_volume, sample_altitude
-from app.terrain.tiles import Style, render_tile, tile_zoom_range
+from app.terrain.tiles import Style, flat_terrarium_tile, render_tile, tile_zoom_range
 
 router = APIRouter(prefix="/api/rasters", tags=["terrain"])
 UPLOAD_CHUNK = 1024 * 1024
@@ -297,7 +297,10 @@ def tile(
             storage.rasterio_env(),
         )  # fmt: skip
     if png is None:
-        return Response(status_code=204)
+        if style == "terrarium":
+            png = flat_terrarium_tile()
+        else:
+            return Response(status_code=204)
     # A raster never changes after upload, so tiles can be cached hard.
     return Response(
         png, media_type="image/png", headers={"Cache-Control": "public, max-age=86400, immutable"}

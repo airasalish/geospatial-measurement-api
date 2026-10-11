@@ -122,6 +122,8 @@ export default function App() {
   const [reportBase, setReportBase] = useState<BaseSpec>({ method: "triangulated" });
   const [marker, setMarker] = useState<LngLat | null>(null);
   const [cursorElev, setCursorElev] = useState<number | null>(null);
+  const [view3d, setView3d] = useState(false);
+  const [exaggeration, setExaggeration] = useState(2);
 
   // ---- UI
   const [upload, setUpload] = useState<UploadState | null>(null);
@@ -421,6 +423,7 @@ export default function App() {
   };
 
   const closeDem = () => {
+    setView3d(false);
     setDem(null);
     setVol(null);
     setProf(null);
@@ -622,6 +625,7 @@ export default function App() {
           dem={dem ? { id: dem.id, bounds: dem.bbox, ...demLayer } : null}
           overlay={vol?.geometry ?? (bottomKind === "profile" ? (prof?.geometry ?? null) : null)}
           marker={marker}
+          terrain3d={dem && view3d ? { id: dem.id, exaggeration, bounds: dem.bbox } : null}
           onCursor={onCursor}
           selected={selected}
           focus={focus}
@@ -685,6 +689,10 @@ export default function App() {
             onClose={closeDem}
             cursorElevation={cursorElev}
             top={active ? 104 : 14}
+            view3d={view3d}
+            onView3d={setView3d}
+            exaggeration={exaggeration}
+            onExaggeration={setExaggeration}
           />
         )}
 

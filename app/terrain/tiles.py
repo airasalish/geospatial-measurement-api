@@ -10,11 +10,18 @@ we shade them here:
 * ``slope``: slope classes for stability and risk review (<10°, 10-20°, 20-30°,
   30-45°, >45°) over the hillshade.
 
+* ``terrarium``: elevation packed into RGB for MapLibre's 3D terrain
+  (``raster-dem``, Terrarium encoding: h = R*256 + G + B/256 - 32768). Heights are
+  relative to the DEM's lowest point. Outside the DEM MapLibre assumes 0, so absolute
+  heights (~900 m) would draw km-high cliffs at the edges; relative heights keep the
+  step at the edge to the site's own relief.
+
 A one-cell buffer around each tile keeps the gradients continuous across tile seams.
 """
 
 import math
 from contextlib import AbstractContextManager
+from functools import lru_cache
 from typing import Any, Literal
 
 import numpy as np
@@ -25,7 +32,7 @@ from rio_tiler.errors import TileOutsideBounds
 from rio_tiler.io import Reader
 from rio_tiler.utils import render
 
-Style = Literal["hillshade", "elevation", "slope"]
+Style = Literal["hillshade", "elevation", "slope", "terrarium"]
 TILE = 256
 WEB_MERCATOR = tms.get("WebMercatorQuad")
 EARTH_CIRCUMFERENCE = 2 * math.pi * 6_378_137
@@ -74,6 +81,16 @@ def _hypsometric(t: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
     return rgb
 
 
+@lru_cache(maxsize=1)
+def flat_terrarium_tile() -> bytes:
+    """Height 0 everywhere. Served instead of 204 for terrain tiles outside the DEM:
+    a raster-dem source can't decode an empty response, and failed DEM tiles stop
+    MapLibre drawing the terrain mesh at all."""
+    rgb = np.zeros((3, TILE, TILE), dtype=np.uint8)
+    rgb[0] = 128  # 128 * 256 - 32768 = 0 m
+    return render(rgb, np.full((TILE, TILE), 255, dtype=np.uint8), img_format="PNG")
+
+
 def render_tile(
     path: str,
     z: int,
@@ -111,6 +128,17 @@ def render_tile(
     valid = ~np.ma.getmaskarray(band) & np.isfinite(dem)
     if not valid.any():
         return None
+
+    if style == "terrarium":
+        inner_dem = dem[1:-1, 1:-1]
+        # Clamp: cubic resampling can undershoot the minimum by a few millimetres.
+        rel = np.where(valid[1:-1, 1:-1], np.maximum(inner_dem - z_range[0], 0.0), 0.0) + 32768.0
+        r = np.floor(rel / 256)
+        g = np.floor(rel) - r * 256
+        b = np.floor((rel - np.floor(rel)) * 256)
+        rgb8 = np.stack([r, g, b]).clip(0, 255).astype(np.uint8)
+        # Fully opaque: transparent pixels would decode as -32768 m.
+        return render(rgb8, np.full(rgb8.shape[1:], 255, dtype=np.uint8), img_format="PNG")
 
     shade, slope = _shade(dem, _pixel_size_m(z, x, y))
     # Drop the 1-pixel buffer.

@@ -56,6 +56,8 @@ interface Props {
   overlay: GeoJSON.Geometry | null;
   /** A highlighted position, e.g. the hovered point of a profile chart. */
   marker: LngLat | null;
+  /** 3D terrain from a DEM (Terrarium tiles), with vertical exaggeration. */
+  terrain3d?: { id: string; exaggeration: number; bounds: BBox | null } | null;
   onCursor?: (lngLat: LngLat | null) => void;
   selected: number | null;
   focus: FocusRequest | null;
@@ -101,7 +103,7 @@ interface Hover {
 }
 
 export function MapView(props: Props) {
-  const { collection, fit, dem, overlay, marker, selected, focus, onSelect, basemap, showLabels, units, padding, hovered, draw } =
+  const { collection, fit, dem, overlay, marker, terrain3d, selected, focus, onSelect, basemap, showLabels, units, padding, hovered, draw } =
     props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -470,6 +472,32 @@ export function MapView(props: Props) {
     const map = mapRef.current;
     if (ready && map?.getLayer("dem") && dem) map.setPaintProperty("dem", "raster-opacity", dem.opacity);
   }, [dem?.opacity, ready]);
+
+  // ---- 3D terrain: a raster-dem source drives MapLibre's terrain mesh
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    if (!terrain3d) {
+      if (map.getTerrain()) map.setTerrain(null);
+      if (map.getSource("dem3d")) map.removeSource("dem3d");
+      map.dragRotate.disable();
+      if (map.getPitch() > 0) map.easeTo({ pitch: 0, bearing: 0, duration: 700 });
+      return;
+    }
+    if (!map.getSource("dem3d")) {
+      map.addSource("dem3d", {
+        type: "raster-dem",
+        tiles: [window.location.origin + terrain.tileUrl(terrain3d.id, "terrarium")],
+        tileSize: 256,
+        encoding: "terrarium",
+        ...(terrain3d.bounds ? { bounds: terrain3d.bounds } : {}),
+        maxzoom: 20,
+      });
+    }
+    map.setTerrain({ source: "dem3d", exaggeration: terrain3d.exaggeration });
+    map.dragRotate.enable();
+    if (map.getPitch() < 30) map.easeTo({ pitch: 62, bearing: -25, duration: 1000 });
+  }, [terrain3d?.id, terrain3d?.exaggeration, ready]);
 
   // ---- overlay + marker
   useEffect(() => {

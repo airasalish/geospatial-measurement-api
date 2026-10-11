@@ -107,9 +107,14 @@ interface TerrainBarProps {
   onClose: () => void;
   cursorElevation: number | null;
   top: number;
+  view3d: boolean;
+  onView3d: (on: boolean) => void;
+  exaggeration: number;
+  onExaggeration: (x: number) => void;
 }
 
-export function TerrainBar({ dem, layer, onLayer, tool, onTool, canReport, onReport, onClose, cursorElevation, top }: TerrainBarProps) {
+export function TerrainBar(props: TerrainBarProps) {
+  const { dem, layer, onLayer, tool, onTool, canReport, onReport, onClose, cursorElevation, top } = props;
   return (
     <section className="overlay terrain-bar" style={{ top }} aria-label="Elevation model tools">
       <div className="terrain-head">
@@ -136,6 +141,32 @@ export function TerrainBar({ dem, layer, onLayer, tool, onTool, canReport, onRep
       </div>
 
       <Legend style={layer.style} zMin={dem.z_min ?? 0} zMax={dem.z_max ?? 1} />
+
+      <div className="view3d">
+        <button
+          type="button"
+          className={`btn btn-sm${props.view3d ? " btn-primary" : ""}`}
+          aria-pressed={props.view3d}
+          onClick={() => props.onView3d(!props.view3d)}
+          title="Tilt into 3D terrain (right-drag or Ctrl+drag to rotate)"
+        >
+          3D terrain
+        </button>
+        {props.view3d && (
+          <label className="opacity">
+            <span className="cell-label">×{props.exaggeration.toFixed(1)}</span>
+            <input
+              type="range"
+              min={1}
+              max={6}
+              step={0.5}
+              value={props.exaggeration}
+              onChange={(e) => props.onExaggeration(Number(e.target.value))}
+              aria-label="Vertical exaggeration"
+            />
+          </label>
+        )}
+      </div>
 
       <label className="opacity">
         <span className="cell-label">Opacity</span>

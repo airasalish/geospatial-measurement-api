@@ -452,3 +452,28 @@ def test_tilejson(client, dem_id):
     assert tj["tiles"][0].endswith("/{z}/{x}/{y}.png?style=slope")
     assert tj["minzoom"] <= tj["maxzoom"]
     assert tj["elevation_range"][1] > tj["elevation_range"][0]
+
+
+@pytest.mark.filterwarnings("ignore::rasterio.errors.NotGeoreferencedWarning")
+def test_terrarium_tiles_encode_relative_elevation(client, dem_id):
+    """Decoding the RGB gives elevation above the DEM minimum (3D terrain)."""
+    import morecantile
+
+    info = client.get(f"/api/rasters/{dem_id}/").json()
+    lon, lat = Transformer.from_crs(f.UTM43, "EPSG:4326", always_xy=True).transform(CX, CY)
+    t = morecantile.tms.get("WebMercatorQuad").tile(lon, lat, 19)
+    r = client.get(f"/api/rasters/{dem_id}/tiles/{t.z}/{t.x}/{t.y}.png", params={"style": "terrarium"})
+    with MemoryFile(r.content) as mf, mf.open() as ds:
+        rgba = ds.read().astype(float)
+    assert rgba[3].min() == 255  # opaque everywhere
+    h = rgba[0] * 256 + rgba[1] + rgba[2] / 256 - 32768
+    # Ground near the cone peaks at ~115 m; the DEM minimum is ~100 m.
+    assert h.min() >= 0
+    assert h.max() == pytest.approx(info["z_max"] - info["z_min"], abs=1.0)
+    # Outside the DEM: a flat (0 m) tile, never 204. raster-dem can't decode empty bodies.
+    far = morecantile.tms.get("WebMercatorQuad").tile(0, 0, 19)
+    r = client.get(f"/api/rasters/{dem_id}/tiles/{far.z}/{far.x}/{far.y}.png", params={"style": "terrarium"})
+    assert r.status_code == 200
+    with MemoryFile(r.content) as mf, mf.open() as ds:
+        flat = ds.read().astype(float)
+    assert np.all(flat[0] * 256 + flat[1] + flat[2] / 256 - 32768 == 0)
