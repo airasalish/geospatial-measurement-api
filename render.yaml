@@ -1,0 +1,11 @@
+# One-click deploy on Render (https://render.com/deploy). Free plan: the SQLite
+# database lives on ephemeral disk, which is fine for a demo.
+services:
+  - type: web
+    name: field-ledger
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: GEO_MAX_UPLOAD_BYTES
+        value: "52428800"
