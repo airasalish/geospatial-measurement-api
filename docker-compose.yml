@@ -1,0 +1,92 @@
+# Full production-shaped stack on one machine:
+#
+#   docker compose up --build
+#
+# UI + API ......... http://localhost:8000   (API docs at /docs, metrics at /metrics)
+# MinIO console .... http://localhost:9001   (traverse / traverse-secret)
+# Prometheus ....... http://localhost:9090
+#
+# The API returns 202 for uploads and a Celery worker processes them. Uploads and
+# COGs live in MinIO (S3 API); GDAL reads COGs in place via /vsis3/. Features go
+# to PostGIS (GiST-indexed geometry, ST_AsMVT vector tiles).
+
+x-app-env: &app-env
+  GEO_DATABASE_URL: postgresql+psycopg://traverse:traverse@db:5432/traverse
+  GEO_STORAGE_BACKEND: s3
+  GEO_S3_ENDPOINT_URL: http://minio:9000
+  GEO_S3_BUCKET: traverse
+  GEO_S3_ACCESS_KEY: traverse
+  GEO_S3_SECRET_KEY: traverse-secret
+  GEO_TASK_MODE: celery
+  GEO_REDIS_URL: redis://redis:6379/0
+  GEO_LOG_FORMAT: json
+
+services:
+  api:
+    build: .
+    image: traverse:local
+    environment: *app-env
+    ports: ["8000:8000"]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    image: traverse:local
+    command: ["celery", "-A", "app.worker", "worker", "--loglevel=INFO", "--concurrency=2"]
+    environment: *app-env
+    depends_on:
+      api: { condition: service_healthy }  # the API applies migrations first
+
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: traverse
+      POSTGRES_PASSWORD: traverse
+      POSTGRES_DB: traverse
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traverse -d traverse"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: traverse
+      MINIO_ROOT_PASSWORD: traverse-secret
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [miniodata:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes: ["./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  miniodata:

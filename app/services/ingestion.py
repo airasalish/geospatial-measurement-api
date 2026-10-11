@@ -18,6 +18,7 @@ from pyproj import CRS
 from sqlalchemy import Table
 from sqlalchemy.orm import Session
 
+from app import metrics
 from app.config import Settings
 from app.errors import GeoAPIError, InvalidGeoFile
 from app.geo.archive import ArchiveLimits
@@ -50,7 +51,8 @@ def _clean_filename(filename: str) -> str:
     return PurePath(filename.replace("\\", "/")).name[:255] or "upload"
 
 
-def ingest_upload(session: Session, settings: Settings, filename: str, data: bytes) -> UploadedFile:
+def create_record(session: Session, filename: str, data: bytes) -> UploadedFile:
+    """Validate the name and register the upload (status PROCESSING)."""
     filename = _clean_filename(filename)
     ext = check_extension(filename)
     record = UploadedFile(
@@ -62,7 +64,11 @@ def ingest_upload(session: Session, settings: Settings, filename: str, data: byt
     )
     session.add(record)
     session.commit()  # the record exists (and is visible) even if processing fails
+    return record
 
+
+def process_record(session: Session, settings: Settings, record: UploadedFile, data: bytes) -> UploadedFile:
+    """Parse, measure and persist. Runs in the request (sync) or in a Celery worker."""
     started = perf_counter()
     try:
         limits = ArchiveLimits(
@@ -70,7 +76,7 @@ def ingest_upload(session: Session, settings: Settings, filename: str, data: byt
             max_uncompressed_bytes=settings.max_uncompressed_bytes,
             max_compression_ratio=settings.max_compression_ratio,
         )
-        dataset = read_dataset(filename, data, limits)
+        dataset = read_dataset(record.filename, data, limits)
         _persist_features(session, settings, record, dataset)
     except GeoAPIError as exc:
         session.rollback()
@@ -86,11 +92,17 @@ def ingest_upload(session: Session, settings: Settings, filename: str, data: byt
     record.processed_at = datetime.now(UTC)
     record.processing_ms = round((perf_counter() - started) * 1000, 2)
     session.commit()
+    metrics.observe_processing("vector", record.status, perf_counter() - started, record.feature_count)
     log.info(
         "Processed file %s (%s, %d features) in %.1f ms",
         record.id, record.file_format, record.feature_count, record.processing_ms,
     )  # fmt: skip
     return record
+
+
+def ingest_upload(session: Session, settings: Settings, filename: str, data: bytes) -> UploadedFile:
+    """Create and process in one go (sync mode)."""
+    return process_record(session, settings, create_record(session, filename, data), data)
 
 
 def _persist_features(session: Session, settings: Settings, record: UploadedFile, dataset: Dataset) -> None:
@@ -197,6 +209,7 @@ def _bbox_cols(b: np.ndarray) -> dict[str, float | None]:
 
 
 def _mark_failed(session: Session, record: UploadedFile, message: str) -> None:
+    metrics.observe_processing("vector", FileStatus.FAILED, 0.0, 0)
     record.status = FileStatus.FAILED
     record.error = message
     record.processed_at = datetime.now(UTC)

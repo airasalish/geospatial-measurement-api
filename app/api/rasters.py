@@ -8,14 +8,15 @@ from pathlib import Path as FsPath
 from typing import Annotated
 
 import rasterio
-from fastapi import APIRouter, Depends, File, Path, Query, Request, Response, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, File, Path, Query, Request, Response, UploadFile, status
+from fastapi.responses import FileResponse, RedirectResponse
 from shapely.geometry import shape
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from app.api.files import PageDep, SessionDep, SettingsDep, _errors
+from app import metrics
+from app.api.files import PageDep, SessionDep, SettingsDep, StorageDep, _errors
 from app.errors import FileTooLarge
 from app.models import Feature, Raster
 from app.schemas import (
@@ -32,20 +33,12 @@ from app.schemas import (
     VolumeRequest,
 )
 from app.services import queries, rasters
-from app.storage import Storage
+from app.storage import S3Storage, Storage
 from app.terrain.analysis import TerrainError, compute_profile, compute_volume, sample_altitude
 from app.terrain.tiles import Style, render_tile, tile_zoom_range
 
 router = APIRouter(prefix="/api/rasters", tags=["terrain"])
 UPLOAD_CHUNK = 1024 * 1024
-
-
-def get_storage(request: Request) -> Storage:
-    storage: Storage = request.app.state.storage
-    return storage
-
-
-StorageDep = Annotated[Storage, Depends(get_storage)]
 
 
 @router.post(
@@ -83,7 +76,22 @@ async def upload_raster(
                     rasters.ingest_raster(session, settings, storage, filename, path)
                 )
 
-        out = await run_in_threadpool(_process)
+        def _enqueue() -> RasterOut:
+            from app import worker
+
+            with request.app.state.db.session_factory() as session:
+                record = rasters.create_raster_record(session, filename, path)
+                key = f"uploads/rasters/{record.id}/{record.filename}"
+                storage.put(path, key)
+                worker.process_raster.delay(record.id, key)
+                session.refresh(record)
+                return RasterOut.model_validate(record)
+
+        if settings.task_mode == "celery":
+            out = await run_in_threadpool(_enqueue)
+            response.status_code = status.HTTP_202_ACCEPTED
+        else:
+            out = await run_in_threadpool(_process)
     response.headers["Location"] = str(request.url_for("get_raster", raster_id=out.id))
     return out
 
@@ -114,10 +122,13 @@ def delete_raster(raster_id: str, session: SessionDep, storage: StorageDep) -> R
 @router.get(
     "/{raster_id}/download/", responses=_errors, summary="Download the DEM as a Cloud-Optimised GeoTIFF"
 )
-def download_raster(raster_id: str, session: SessionDep, storage: StorageDep) -> FileResponse:
+def download_raster(raster_id: str, session: SessionDep, storage: StorageDep) -> Response:
     record = rasters.get_raster(session, raster_id)
     assert record.storage_key
     stem = FsPath(record.filename).stem
+    if storage.local_path(record.storage_key) is None and isinstance(storage, S3Storage):
+        # Object storage: hand the client a short-lived presigned URL instead of proxying bytes.
+        return RedirectResponse(storage.presigned_url(record.storage_key, f"{stem}.cog.tif"), status_code=307)
     return FileResponse(
         storage.gdal_path(record.storage_key), media_type="image/tiff", filename=f"{stem}.cog.tif"
     )
@@ -258,9 +269,13 @@ def tile(
 ) -> Response:
     record = rasters.get_raster(session, raster_id)
     assert record.storage_key
-    png = render_tile(
-        storage.gdal_path(record.storage_key), z, x, y, style, (record.z_min or 0.0, record.z_max or 1.0)
-    )
+    with metrics.ANALYSIS.labels("tile").time():
+        png = render_tile(
+            storage.gdal_path(record.storage_key),
+            z, x, y, style,
+            (record.z_min or 0.0, record.z_max or 1.0),
+            storage.gdal_env(),
+        )  # fmt: skip
     if png is None:
         return Response(status_code=204)
     # A raster never changes after upload, so tiles can be cached hard.
@@ -279,7 +294,7 @@ def tilejson(
 ) -> dict[str, object]:
     record = rasters.get_raster(session, raster_id)
     assert record.storage_key
-    minzoom, maxzoom = tile_zoom_range(storage.gdal_path(record.storage_key))
+    minzoom, maxzoom = tile_zoom_range(storage.gdal_path(record.storage_key), storage.gdal_env())
     url = str(request.url_for("tile", raster_id=raster_id, z=0, x=0, y=0)).replace(
         "/0/0/0.png", "/{z}/{x}/{y}.png"
     )

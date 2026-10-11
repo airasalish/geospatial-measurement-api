@@ -49,3 +49,24 @@ def _clean_postgres() -> Iterator[None]:
 def client(settings: Settings) -> Iterator[TestClient]:
     with TestClient(create_app(settings)) as c:
         yield c
+
+
+INTEGRATION = os.environ.get("GEO_INTEGRATION") == "1"
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if INTEGRATION:
+        return
+    skip = pytest.mark.skip(reason="needs the docker services (set GEO_INTEGRATION=1)")
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip)
+
+
+@pytest.fixture
+def integration_client() -> Iterator[TestClient]:
+    """The API configured from GEO_* environment (same as the running worker)."""
+    from app.config import Settings as EnvSettings
+
+    with TestClient(create_app(EnvSettings())) as c:
+        yield c

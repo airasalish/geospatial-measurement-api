@@ -18,6 +18,7 @@ from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
+import rasterio
 from morecantile import Tile, tms
 from rio_tiler.errors import TileOutsideBounds
 from rio_tiler.io import Reader
@@ -73,10 +74,16 @@ def _hypsometric(t: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
 
 
 def render_tile(
-    path: str, z: int, x: int, y: int, style: Style, z_range: tuple[float, float]
+    path: str,
+    z: int,
+    x: int,
+    y: int,
+    style: Style,
+    z_range: tuple[float, float],
+    gdal_env: dict[str, str] | None = None,
 ) -> bytes | None:
     """PNG bytes for tile z/x/y, or None when the tile is outside the DEM."""
-    with Reader(path) as src:
+    with rasterio.Env(**(gdal_env or {})), Reader(path) as src:
         if not src.tile_exists(x, y, z):
             return None
         try:
@@ -127,6 +134,6 @@ def render_tile(
     return render(data, mask, img_format="PNG")
 
 
-def tile_zoom_range(path: str) -> tuple[int, int]:
-    with Reader(path) as src:
+def tile_zoom_range(path: str, gdal_env: dict[str, str] | None = None) -> tuple[int, int]:
+    with rasterio.Env(**(gdal_env or {})), Reader(path) as src:
         return int(src.minzoom), int(src.maxzoom)

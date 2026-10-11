@@ -21,8 +21,9 @@ from app.schemas import (
     Page,
 )
 from app.services import queries
-from app.services.ingestion import ingest_upload
+from app.services.ingestion import create_record, ingest_upload
 from app.services.vector_tiles import file_tile
+from app.storage import Storage
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
@@ -34,12 +35,18 @@ def get_settings(request: Request) -> Settings:
     return settings
 
 
+def get_storage(request: Request) -> Storage:
+    storage: Storage = request.app.state.storage
+    return storage
+
+
 def get_session(request: Request) -> Iterator[Session]:
     yield from request.app.state.db.session()
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+StorageDep = Annotated[Storage, Depends(get_storage)]
 
 
 def pagination(
@@ -94,13 +101,14 @@ async def _read_upload(upload: UploadFile, max_bytes: int) -> bytes:
     "/",
     status_code=status.HTTP_201_CREATED,
     response_model=FileOut,
-    responses=_errors,
+    responses={**_errors, 202: {"model": FileOut, "description": "Queued (GEO_TASK_MODE=celery)"}},
     summary="Upload and process a geospatial file",
 )
 async def upload_file(
     request: Request,
     response: Response,
     settings: SettingsDep,
+    storage: StorageDep,
     file: Annotated[UploadFile, File(description=".zip (Shapefile), .kml or .kmz")],
 ) -> FileOut:
     filename = file.filename or ""
@@ -114,7 +122,22 @@ async def upload_file(
             record = ingest_upload(session, settings, filename, data)
             return FileOut.model_validate(record)
 
-    out = await run_in_threadpool(_process)
+    def _enqueue() -> FileOut:
+        from app import worker
+
+        with request.app.state.db.session_factory() as session:
+            record = create_record(session, filename, data)
+            key = f"uploads/files/{record.id}/{record.filename}"
+            storage.put_bytes(data, key)
+            worker.process_file.delay(record.id, key)
+            session.refresh(record)
+            return FileOut.model_validate(record)
+
+    if settings.task_mode == "celery":
+        out = await run_in_threadpool(_enqueue)
+        response.status_code = status.HTTP_202_ACCEPTED
+    else:
+        out = await run_in_threadpool(_process)
     response.headers["Location"] = str(request.url_for("get_file", file_id=out.id))
     return out
 

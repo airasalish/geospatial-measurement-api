@@ -18,6 +18,7 @@ from shapely.geometry.base import BaseGeometry
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import metrics
 from app.config import Settings
 from app.errors import GeoAPIError, InvalidGeoFile, NotFound, UnsupportedFileType
 from app.models import Feature, FileStatus, Raster
@@ -47,9 +48,7 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def ingest_raster(
-    session: Session, settings: Settings, storage: Storage, filename: str, upload: Path
-) -> Raster:
+def create_raster_record(session: Session, filename: str, upload: Path) -> Raster:
     filename = PurePath(filename.replace("\\", "/")).name[:255] or "dem.tif"
     check_raster_extension(filename)
     record = Raster(
@@ -60,7 +59,13 @@ def ingest_raster(
     )
     session.add(record)
     session.commit()
+    return record
 
+
+def process_raster_record(
+    session: Session, settings: Settings, storage: Storage, record: Raster, upload: Path
+) -> Raster:
+    """Validate, convert to COG and store. Runs in the request (sync) or a Celery worker."""
     started = perf_counter()
     with tempfile.TemporaryDirectory() as tmp:
         cog = Path(tmp) / "cog.tif"
@@ -87,11 +92,22 @@ def ingest_raster(
     record.processed_at = datetime.now(UTC)
     record.processing_ms = round((perf_counter() - started) * 1000, 2)
     session.commit()
+    metrics.observe_processing("raster", record.status, perf_counter() - started)
     log.info("Ingested DEM %s (%dx%d) in %.0f ms", record.id, info.width, info.height, record.processing_ms)
     return record
 
 
+def ingest_raster(
+    session: Session, settings: Settings, storage: Storage, filename: str, upload: Path
+) -> Raster:
+    """Create and process in one go (sync mode)."""
+    return process_raster_record(
+        session, settings, storage, create_raster_record(session, filename, upload), upload
+    )
+
+
 def _fail(session: Session, record: Raster, message: str) -> None:
+    metrics.observe_processing("raster", FileStatus.FAILED, 0.0)
     record.status = FileStatus.FAILED
     record.error = message
     record.processed_at = datetime.now(UTC)
@@ -110,7 +126,8 @@ def get_raster(session: Session, raster_id: str, *, ready: bool = True) -> Raste
 @contextmanager
 def open_raster(storage: Storage, record: Raster) -> Iterator[rasterio.io.DatasetReader]:
     assert record.storage_key
-    with rasterio.open(storage.gdal_path(record.storage_key)) as ds:
+    # The storage's GDAL settings make /vsis3/ paths readable (endpoint, credentials).
+    with rasterio.Env(**storage.gdal_env()), rasterio.open(storage.gdal_path(record.storage_key)) as ds:
         yield ds
 
 

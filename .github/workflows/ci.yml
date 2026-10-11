@@ -74,6 +74,45 @@ jobs:
       - name: Build
         run: npm run build
 
+  compose:
+    # Boots docker-compose.yml (API, Celery worker, PostGIS, Redis, MinIO, Prometheus)
+    # and pushes uploads through the real queue, worker and object storage.
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    env:
+      GEO_INTEGRATION: "1"
+      GEO_DATABASE_URL: postgresql+psycopg://traverse:traverse@localhost:5432/traverse
+      GEO_STORAGE_BACKEND: s3
+      GEO_S3_ENDPOINT_URL: http://localhost:9000
+      GEO_S3_ACCESS_KEY: traverse
+      GEO_S3_SECRET_KEY: traverse-secret
+      GEO_TASK_MODE: celery
+      GEO_REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Start the stack
+        run: docker compose up -d --build --wait --wait-timeout 300
+      - name: Readiness (database, storage, queue)
+        run: curl -fsS localhost:8000/health/ready
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Integration tests (host API process, containerised worker)
+        run: pytest -m integration -v
+      - name: Metrics are scraped
+        run: |
+          sleep 20
+          curl -fsS "localhost:9090/api/v1/query?query=up%7Bjob%3D%22traverse-api%22%7D" | tee /dev/stderr | grep -q '"value":\[[^]]*,"1"\]'
+      - name: Logs
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Stop
+        if: always()
+        run: docker compose down -v
+
   docker:
     runs-on: ubuntu-latest
     needs: [backend, postgis, frontend]

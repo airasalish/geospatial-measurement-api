@@ -1,6 +1,8 @@
 """Application settings, loaded from environment variables (prefix ``GEO_``)."""
 
 from functools import lru_cache
+from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -35,7 +37,33 @@ class Settings(BaseSettings):
     storage_dir: str = "data/blobs"
     max_raster_upload_bytes: int = 500 * 1024 * 1024
     max_raster_pixels: int = 250_000_000
+
+    # Blob storage: "local" (storage_dir) or "s3" (S3 or MinIO).
+    storage_backend: Literal["local", "s3"] = "local"
+    s3_bucket: str = "traverse"
+    s3_endpoint_url: str | None = None  # e.g. http://minio:9000; None for AWS
+    s3_access_key: str | None = None
+    s3_secret_key: str | None = None
+    s3_region: str = "us-east-1"
+
+    # Processing: "sync" runs in the request (simple, the demo default);
+    # "celery" returns 202 and a worker processes the upload from blob storage.
+    task_mode: Literal["sync", "celery"] = "sync"
+    redis_url: str = "redis://localhost:6379/0"
+    celery_eager: bool = False  # run tasks in-process (tests)
+
+    # Observability
+    log_format: Literal["text", "json"] = "text"
     samples_dir: str = "samples"
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def resolve_path(path: str) -> Path:
+    """Relative settings paths are relative to the project root, not the CWD."""
+    p = Path(path)
+    return p if p.is_absolute() else PROJECT_ROOT / p
 
 
 @lru_cache
