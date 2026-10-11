@@ -26,6 +26,7 @@ from app.geo.measure import measure_batch
 from app.geo.readers import check_extension, read_dataset
 from app.geo.types import Dataset, RawFeature
 from app.models import Feature, FileStatus, UploadedFile
+from app.services.vector_tiles import populate_postgis_geometry
 
 log = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ def _persist_features(session: Session, settings: Settings, record: UploadedFile
             layer_names.update((raw.layer, None) for raw in batch if raw.layer)
         warnings.extend(layer.warnings)
 
+    populate_postgis_geometry(session, record.id)
     if len(crs_labels) > 1:
         warnings.append("Layers use different CRSs; see each feature's crs.")
     if index == 0:
@@ -162,6 +164,7 @@ def _rows(
     # Vectorised GeoJSON encoding for the whole batch (much faster than per-feature mapping()).
     geojson = shapely.to_geojson(geoms)
     geojson_wgs84 = shapely.to_geojson(display)
+    bounds = shapely.bounds(display)  # NaN rows for missing geometry
     return [
         {
             "file_id": file_id,
@@ -171,6 +174,7 @@ def _rows(
             "geometry_type": raw.geometry.geom_type if raw.geometry is not None else raw.declared_type,
             "geometry": gj,
             "geometry_wgs84": gj84,
+            **_bbox_cols(bounds[offset]),
             "crs": crs_label,
             "properties": raw.properties,
             "measurement_status": m.status,
@@ -184,6 +188,12 @@ def _rows(
             zip(batch, measurements, geojson, geojson_wgs84, strict=True)
         )
     ]
+
+
+def _bbox_cols(b: np.ndarray) -> dict[str, float | None]:
+    if not np.isfinite(b).all():
+        return {"minx": None, "miny": None, "maxx": None, "maxy": None}
+    return {"minx": float(b[0]), "miny": float(b[1]), "maxx": float(b[2]), "maxy": float(b[3])}
 
 
 def _mark_failed(session: Session, record: UploadedFile, message: str) -> None:

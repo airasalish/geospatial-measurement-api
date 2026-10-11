@@ -350,3 +350,18 @@ def test_display_name(props, expected):
     from app.services.queries import display_name
 
     assert display_name(props) == expected
+
+
+def test_migrations_match_models(tmp_path):
+    """Alembic's autogenerate finds nothing to change: migrations and models agree."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    from app.db import Base, Database
+
+    db = Database(f"sqlite:///{tmp_path / 'm.db'}")
+    db.migrate()
+    db.migrate()  # idempotent
+    with db.engine.connect() as conn:
+        diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
+    assert diff == []

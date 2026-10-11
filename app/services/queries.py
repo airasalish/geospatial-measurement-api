@@ -27,10 +27,19 @@ def list_files(session: Session, limit: int, offset: int) -> tuple[int, Sequence
     return total, rows
 
 
+BBox = tuple[float, float, float, float]
+
+
 def _feature_query(
-    file_id: str, status: MeasurementStatus | None, geometry_type: str | None
+    file_id: str, status: MeasurementStatus | None, geometry_type: str | None, bbox: BBox | None = None
 ) -> Select[Feature]:
     stmt = select(Feature).where(Feature.file_id == file_id)
+    if bbox is not None:
+        # Bounding-box overlap: index-friendly and the same on SQLite and PostGIS.
+        minx, miny, maxx, maxy = bbox
+        stmt = stmt.where(
+            Feature.maxx >= minx, Feature.minx <= maxx, Feature.maxy >= miny, Feature.miny <= maxy
+        )
     if status is not None:
         stmt = stmt.where(Feature.measurement_status == status)
     if geometry_type is not None:
@@ -45,8 +54,9 @@ def list_features(
     offset: int,
     status: MeasurementStatus | None = None,
     geometry_type: str | None = None,
+    bbox: BBox | None = None,
 ) -> tuple[int, Sequence[Feature]]:
-    stmt = _feature_query(file_id, status, geometry_type)
+    stmt = _feature_query(file_id, status, geometry_type, bbox)
     total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = session.scalars(stmt.order_by(Feature.index).limit(limit).offset(offset)).all()
     return total, rows

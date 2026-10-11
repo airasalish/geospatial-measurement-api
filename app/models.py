@@ -15,6 +15,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -70,7 +71,10 @@ class UploadedFile(Base):
 
 class Feature(Base):
     __tablename__ = "features"
-    __table_args__ = (UniqueConstraint("file_id", "index", name="uq_feature_file_index"),)
+    __table_args__ = (
+        UniqueConstraint("file_id", "index", name="uq_feature_file_index"),
+        Index("ix_features_file_bbox", "file_id", "minx", "maxx", "miny", "maxy"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     file_id: Mapped[str] = mapped_column(ForeignKey("files.id", ondelete="CASCADE"), index=True)
@@ -85,6 +89,13 @@ class Feature(Base):
     geometry: Mapped[str | None] = mapped_column(Text, default=None)
     # The same geometry in WGS84 for web maps (None if it can't be placed on Earth).
     geometry_wgs84: Mapped[str | None] = mapped_column(Text, default=None)
+    # WGS84 bounding box: a portable spatial prefilter (bbox queries, vector tiles).
+    # On PostgreSQL a PostGIS ``geom`` column with a GiST index is also maintained
+    # (see migrations); it is not mapped here so the model stays dialect-neutral.
+    minx: Mapped[float | None] = mapped_column(Float, default=None)
+    miny: Mapped[float | None] = mapped_column(Float, default=None)
+    maxx: Mapped[float | None] = mapped_column(Float, default=None)
+    maxy: Mapped[float | None] = mapped_column(Float, default=None)
     crs: Mapped[str | None] = mapped_column(String(64), default=None)
     properties: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 

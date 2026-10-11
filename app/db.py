@@ -6,6 +6,8 @@ from pathlib import Path
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
+
 
 class Base(DeclarativeBase):
     pass
@@ -41,10 +43,20 @@ class Database:
         self.engine = make_engine(url)
         self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
 
-    def create_all(self) -> None:
-        from app import models  # noqa: F401  (registers tables on Base.metadata)
+    @property
+    def is_postgres(self) -> bool:
+        return self.engine.dialect.name == "postgresql"
 
-        Base.metadata.create_all(self.engine)
+    def migrate(self) -> None:
+        """Bring the schema to the latest Alembic revision (idempotent)."""
+        from alembic import command
+        from alembic.config import Config
+
+        cfg = Config(str(MIGRATIONS_DIR.parent / "alembic.ini"))
+        cfg.set_main_option("script_location", str(MIGRATIONS_DIR))
+        with self.engine.begin() as conn:
+            cfg.attributes["connection"] = conn
+            command.upgrade(cfg, "head")
 
     def session(self) -> Iterator[Session]:
         with self.session_factory() as session:

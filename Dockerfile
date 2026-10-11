@@ -27,6 +27,8 @@ COPY pyproject.toml README.md ./
 RUN mkdir app && touch app/__init__.py && pip install . && rm -rf app
 
 COPY app ./app
+COPY migrations ./migrations
+COPY alembic.ini ./
 COPY samples ./samples
 COPY --from=ui /ui/dist ./frontend/dist
 RUN pip install --no-deps . \

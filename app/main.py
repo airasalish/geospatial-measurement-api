@@ -58,7 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        db.create_all()
+        db.migrate()
         yield
         db.engine.dispose()
 

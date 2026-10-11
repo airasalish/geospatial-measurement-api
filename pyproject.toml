@@ -20,6 +20,9 @@ dependencies = [
     "rasterio>=1.4",
     "scipy>=1.13",
     "rio-tiler>=7.0",
+    "alembic>=1.13",
+    "mapbox-vector-tile>=2.1",
+    "psycopg[binary]>=3.2",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +47,8 @@ addopts = "-ra --strict-markers"
 filterwarnings = [
     # Starlette nudges towards httpx2 for TestClient; httpx works and is the stable choice for now.
     "ignore:Using .httpx. with .starlette.testclient. is deprecated",
+    # Inside mapbox-vector-tile, not our code.
+    "ignore::DeprecationWarning:mapbox_vector_tile.*",
 ]
 
 [tool.coverage.run]
@@ -74,5 +79,5 @@ ignore_missing_imports = true
 exclude = ["tests/"]
 
 [[tool.mypy.overrides]]
-module = ["shapefile.*", "shapely.*", "defusedxml.*", "rasterio.*", "scipy.*", "affine.*", "rio_tiler.*", "morecantile.*"]
+module = ["shapefile.*", "shapely.*", "defusedxml.*", "rasterio.*", "scipy.*", "affine.*", "rio_tiler.*", "morecantile.*", "mapbox_vector_tile.*"]
 ignore_missing_imports = true

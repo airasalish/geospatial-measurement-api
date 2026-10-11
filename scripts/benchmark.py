@@ -37,7 +37,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         settings = Settings(database_url=f"sqlite:///{Path(tmp) / 'bench.db'}")
         db = Database(settings.database_url)
-        db.create_all()
+        db.migrate()
         with db.session_factory() as session:
             start = time.perf_counter()
             record = ingest_upload(session, settings, "bench.zip", data)

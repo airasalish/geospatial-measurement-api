@@ -3,13 +3,13 @@
 from collections.abc import Iterator
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Path, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.config import Settings
-from app.errors import FileTooLarge
+from app.errors import FileTooLarge, GeoAPIError
 from app.geo.readers import check_extension
 from app.models import MeasurementStatus
 from app.schemas import (
@@ -22,6 +22,7 @@ from app.schemas import (
 )
 from app.services import queries
 from app.services.ingestion import ingest_upload
+from app.services.vector_tiles import file_tile
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
@@ -50,6 +51,25 @@ def pagination(
 
 
 PageDep = Annotated[tuple[int, int], Depends(pagination)]
+
+
+def parse_bbox(
+    bbox: Annotated[
+        str | None, Query(description="WGS84 filter 'min_lon,min_lat,max_lon,max_lat' (bounding-box overlap)")
+    ] = None,
+) -> tuple[float, float, float, float] | None:
+    if bbox is None:
+        return None
+    try:
+        minx, miny, maxx, maxy = (float(v) for v in bbox.split(","))
+    except ValueError as exc:
+        raise GeoAPIError("bbox must be four numbers: min_lon,min_lat,max_lon,max_lat") from exc
+    if not (-180 <= minx <= maxx <= 180 and -90 <= miny <= maxy <= 90):
+        raise GeoAPIError("bbox must be a valid WGS84 extent with min <= max.")
+    return minx, miny, maxx, maxy
+
+
+BBoxDep = Annotated[tuple[float, float, float, float] | None, Depends(parse_bbox)]
 
 _errors: dict[int | str, dict[str, Any]] = {
     code: {"model": ErrorResponse}
@@ -132,11 +152,14 @@ def list_features(
     file_id: str,
     session: SessionDep,
     page: PageDep,
+    bbox: BBoxDep,
     geometry_type: Annotated[str | None, Query(description="e.g. Polygon")] = None,
 ) -> Page[FeatureOut]:
     queries.get_file(session, file_id)
     limit, offset = page
-    total, rows = queries.list_features(session, file_id, limit, offset, geometry_type=geometry_type)
+    total, rows = queries.list_features(
+        session, file_id, limit, offset, geometry_type=geometry_type, bbox=bbox
+    )
     return Page[FeatureOut](
         total=total, limit=limit, offset=offset, items=[FeatureOut.model_validate(r) for r in rows]
     )
@@ -171,6 +194,31 @@ def get_geojson(
 
 
 @router.get(
+    "/{file_id}/tiles/{z}/{x}/{y}.mvt",
+    responses={**_errors, 200: {"content": {"application/vnd.mapbox-vector-tile": {}}}},
+    summary="Mapbox Vector Tile of the file's features (layer 'features')",
+)
+def vector_tile(
+    file_id: str,
+    z: Annotated[int, Path(ge=0, le=24)],
+    x: Annotated[int, Path(ge=0)],
+    y: Annotated[int, Path(ge=0)],
+    session: SessionDep,
+) -> Response:
+    queries.get_file(session, file_id)
+    if x >= 2**z or y >= 2**z:
+        raise GeoAPIError("Tile coordinates are out of range for this zoom.")
+    data = file_tile(session, file_id, z, x, y)
+    if not data:
+        return Response(status_code=204)
+    return Response(
+        data,
+        media_type="application/vnd.mapbox-vector-tile",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.get(
     "/{file_id}/features/{index}/",
     response_model=FeatureOut,
     responses=_errors,
@@ -190,12 +238,13 @@ def list_measurements(
     file_id: str,
     session: SessionDep,
     page: PageDep,
+    bbox: BBoxDep,
     status_filter: Annotated[MeasurementStatus | None, Query(alias="status")] = None,
     geometry_type: Annotated[str | None, Query(description="e.g. Polygon")] = None,
 ) -> MeasurementsResponse:
     queries.get_file(session, file_id)
     limit, offset = page
-    total, rows = queries.list_features(session, file_id, limit, offset, status_filter, geometry_type)
+    total, rows = queries.list_features(session, file_id, limit, offset, status_filter, geometry_type, bbox)
     return MeasurementsResponse(
         file_id=file_id,
         summary=queries.measurement_summary(session, file_id),
