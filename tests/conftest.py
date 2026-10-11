@@ -11,7 +11,11 @@ from app.main import create_app
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     # Tests never depend on whether the UI happens to be built locally.
-    return Settings(database_url=f"sqlite:///{tmp_path / 'test.db'}", frontend_dir=str(tmp_path / "no-ui"))
+    return Settings(
+        database_url=f"sqlite:///{tmp_path / 'test.db'}",
+        frontend_dir=str(tmp_path / "no-ui"),
+        storage_dir=str(tmp_path / "blobs"),
+    )
 
 
 @pytest.fixture

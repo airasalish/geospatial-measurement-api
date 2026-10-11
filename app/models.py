@@ -99,3 +99,35 @@ class Feature(Base):
     measurement_note: Mapped[str | None] = mapped_column(Text, default=None)
 
     file: Mapped[UploadedFile] = relationship(back_populates="features")
+
+
+class Raster(Base):
+    """An uploaded elevation model (DEM/DSM), stored as a Cloud-Optimised GeoTIFF."""
+
+    __tablename__ = "rasters"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    filename: Mapped[str] = mapped_column(String(255))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[FileStatus] = mapped_column(Enum(FileStatus, native_enum=False, length=16))
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    storage_key: Mapped[str | None] = mapped_column(String(255), default=None)
+
+    crs: Mapped[str | None] = mapped_column(String(64), default=None)
+    crs_wkt: Mapped[str | None] = mapped_column(Text, default=None)
+    width: Mapped[int | None] = mapped_column(Integer, default=None)
+    height: Mapped[int | None] = mapped_column(Integer, default=None)
+    band_count: Mapped[int | None] = mapped_column(Integer, default=None)
+    dtype: Mapped[str | None] = mapped_column(String(16), default=None)
+    nodata: Mapped[float | None] = mapped_column(Float, default=None)
+    cell_size_m: Mapped[list[float] | None] = mapped_column(JSON, default=None)
+    bbox: Mapped[list[float] | None] = mapped_column(JSON, default=None)
+    z_min: Mapped[float | None] = mapped_column(Float, default=None)
+    z_max: Mapped[float | None] = mapped_column(Float, default=None)
+    z_mean: Mapped[float | None] = mapped_column(Float, default=None)
+    valid_pct: Mapped[float | None] = mapped_column(Float, default=None)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    processing_ms: Mapped[float | None] = mapped_column(Float, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

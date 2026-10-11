@@ -13,10 +13,12 @@ from starlette.datastructures import URL
 from starlette.types import Receive, Scope, Send
 
 from app.api.files import router as files_router
+from app.api.rasters import router as rasters_router
 from app.config import Settings, get_settings
 from app.db import Database
 from app.errors import GeoAPIError
 from app.schemas import ErrorDetail, ErrorResponse
+from app.storage import LocalStorage
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -71,6 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.db = db
+    app.state.storage = LocalStorage(_resolve(settings.storage_dir))
 
     @app.exception_handler(GeoAPIError)
     async def _geo_error(_: Request, exc: GeoAPIError) -> JSONResponse:
@@ -84,6 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(files_router)
+    app.include_router(rasters_router)
 
     if origins := [o.strip() for o in settings.cors_origins.split(",") if o.strip()]:
         app.add_middleware(

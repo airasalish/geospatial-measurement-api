@@ -117,3 +117,59 @@ def kml_line(coords: Sequence[tuple[float, float]]) -> str:
 
 
 TODAY = dt.date(2024, 1, 15)
+
+
+# --------------------------------------------------------------------- DEMs
+
+UTM43 = "EPSG:32643"
+DEM_ORIGIN = (777_000.0, 1_435_100.0)  # Devanahalli area, UTM 43N
+
+
+def dem_grid(n: int = 200, res: float = 0.5):
+    """Cell-centre coordinate grids for a north-up n x n DEM at DEM_ORIGIN."""
+    import numpy as np
+
+    x0, y0 = DEM_ORIGIN
+    xs = x0 + res * (np.arange(n) + 0.5)
+    ys = y0 - res * (np.arange(n) + 0.5)
+    return np.meshgrid(xs, ys)
+
+
+def cone(x, y, cx: float, cy: float, radius: float, height: float):
+    import numpy as np
+
+    return np.clip(height * (1 - np.hypot(x - cx, y - cy) / radius), 0, None)
+
+
+def dem_bytes(
+    z,
+    *,
+    res: float = 0.5,
+    crs: str | None = UTM43,
+    origin: tuple[float, float] = DEM_ORIGIN,
+    nodata: float | None = -9999.0,
+    dtype: str = "float32",
+    count: int = 1,
+) -> bytes:
+    """A GeoTIFF in memory."""
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    rows, cols = z.shape
+    with MemoryFile() as mf:
+        with mf.open(
+            driver="GTiff", width=cols, height=rows, count=count, dtype=dtype, crs=crs,
+            transform=from_origin(origin[0], origin[1], res, res), nodata=nodata,
+        ) as ds:  # fmt: skip
+            for band in range(1, count + 1):
+                ds.write(z.astype(dtype), band)
+        return mf.read()
+
+
+def utm_to_wgs84(geom):
+    import numpy as np
+    import shapely
+    from pyproj import Transformer
+
+    t = Transformer.from_crs(UTM43, "EPSG:4326", always_xy=True)
+    return shapely.transform(geom, lambda c: np.column_stack(t.transform(c[:, 0], c[:, 1])))

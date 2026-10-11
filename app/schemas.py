@@ -2,7 +2,7 @@
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -101,3 +101,132 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorDetail
+
+
+# ------------------------------------------------------------------ terrain
+
+
+class RasterOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    filename: str
+    size_bytes: int
+    sha256: str
+    status: FileStatus
+    error: str | None
+    crs: str | None
+    width: int | None
+    height: int | None
+    band_count: int | None
+    dtype: str | None
+    nodata: float | None
+    cell_size_m: list[float] | None = Field(description="Ground cell size [x, y] in metres.")
+    bbox: list[float] | None = Field(description="WGS84 extent [min_lon, min_lat, max_lon, max_lat].")
+    z_min: float | None
+    z_max: float | None
+    z_mean: float | None
+    valid_pct: float | None = Field(description="Share of cells with an elevation (not nodata).")
+    warnings: list[str]
+    processing_ms: float | None
+    created_at: datetime
+    processed_at: datetime | None
+
+    @field_validator("created_at", "processed_at")
+    @classmethod
+    def _assume_utc(cls, value: datetime | None) -> datetime | None:
+        return value.replace(tzinfo=UTC) if value is not None and value.tzinfo is None else value
+
+
+class FeatureRef(BaseModel):
+    file_id: str
+    index: int = Field(ge=0)
+
+
+class BaseSpec(BaseModel):
+    method: Literal["lowest", "highest", "mean", "plane", "triangulated", "custom", "surface"] = Field(
+        default="triangulated",
+        description="How the base under the material is estimated. 'surface' compares against another DEM.",
+    )
+    elevation: float | None = Field(default=None, description="Base elevation for method 'custom' (metres).")
+    raster_id: str | None = Field(default=None, description="Second DEM for method 'surface'.")
+
+
+class VolumeRequest(BaseModel):
+    geometry: dict[str, Any] | None = Field(
+        default=None, description="GeoJSON Polygon/MultiPolygon in WGS84 (lon/lat)."
+    )
+    feature: FeatureRef | None = Field(
+        default=None, description="Or: a polygon from an uploaded vector file."
+    )
+    base: BaseSpec = BaseSpec()
+    slope_threshold_deg: float = Field(default=30.0, gt=0, lt=90)
+
+
+class VolumeOut(BaseModel):
+    raster_id: str
+    base_method: str
+    base_elevation: dict[str, float]
+    cut_m3: float = Field(description="Material above the base surface (stockpile volume).")
+    fill_m3: float = Field(description="Void below the base surface (pit volume).")
+    net_m3: float
+    area_2d_m2: float = Field(description="Planimetric area of the DEM cells inside the polygon.")
+    surface_area_3d_m2: float = Field(description="Terrain surface area, accounting for slope.")
+    elevation: dict[str, float]
+    max_height_above_base_m: float
+    max_depth_below_base_m: float
+    slope: dict[str, float]
+    cells: dict[str, int]
+    coverage_pct: float
+    cell_size_m: tuple[float, float]
+    cell_method: str
+    plane: dict[str, float] | None
+    warnings: list[str]
+
+
+class BatchVolumeRequest(BaseModel):
+    file_id: str = Field(description="Vector file whose polygons (e.g. stockpile outlines) are measured.")
+    base: BaseSpec = BaseSpec()
+    slope_threshold_deg: float = Field(default=30.0, gt=0, lt=90)
+
+
+class BatchVolumeItem(BaseModel):
+    index: int
+    name: str | None
+    status: Literal["OK", "SKIPPED", "FAILED"]
+    message: str | None = None
+    result: VolumeOut | None = None
+
+
+class BatchVolumeOut(BaseModel):
+    raster_id: str
+    file_id: str
+    base_method: str
+    totals: dict[str, float]
+    measured: int
+    skipped: int
+    failed: int
+    items: list[BatchVolumeItem]
+
+
+class ProfileRequest(BaseModel):
+    geometry: dict[str, Any] | None = Field(default=None, description="GeoJSON LineString in WGS84.")
+    feature: FeatureRef | None = None
+    max_samples: int = Field(default=1_000, ge=2, le=5_000)
+
+
+class ProfileOut(BaseModel):
+    raster_id: str
+    length_m: float
+    stats: dict[str, Any]
+    distance_m: list[float]
+    elevation_m: list[float | None]
+    lon: list[float]
+    lat: list[float]
+
+
+class AltitudeOut(BaseModel):
+    raster_id: str
+    lon: float
+    lat: float
+    elevation_m: float | None = Field(description="Bilinear elevation; null outside the DEM or on nodata.")

@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     cors_origins: str = ""
     # Directory with the built frontend (frontend/dist). Served at / when it exists.
     frontend_dir: str = "frontend/dist"
+
+    # Elevation models (DEM/DSM GeoTIFFs). Stored as COGs under storage_dir.
+    storage_dir: str = "data/blobs"
+    max_raster_upload_bytes: int = 500 * 1024 * 1024
+    max_raster_pixels: int = 250_000_000
     samples_dir: str = "samples"
 
 
